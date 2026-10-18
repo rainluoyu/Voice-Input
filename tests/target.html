@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>真实语义输入 · 输入测试页</title>
+<style>body{font:16px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;max-width:700px;margin:40px auto;padding:0 20px;color:#25364c}label{display:block;margin:24px 0}input,textarea{display:block;width:100%;box-sizing:border-box;padding:10px;font:inherit;border:1px solid #7893b4;border-radius:4px}textarea{height:120px}small{color:#60748c}</style>
+<h1>真实语义输入测试</h1><p>此页完全离线，不发送、不保存内容，没有表单或提交按钮。请只用虚构文字测试。</p>
+<label>普通输入框 A<input id="target-a" placeholder="定位光标后按两次 Ctrl+Alt+R"></label>
+<label>普通输入框 B<input id="target-b" placeholder="处理中从 A 切到 B，结果应进入完成时的活动位置"></label>
+<label>多行输入框<textarea id="target-textarea" placeholder="测试段落、空行和代码；多行自动粘贴会替换剪贴板"></textarea></label>
+<label>密码样式输入框（程序不检查密码属性）<input id="target-password" type="password" autocomplete="off" placeholder="禁止输入真实密码或敏感内容"></label>
+<p><small>检查中文和 📦 是否完整，单行自动输入是否保持剪贴板，多行粘贴及手动复制是否替换剪贴板。程序不按 Enter，也不恢复原窗口或检查输入框；请自行确认当前活动位置。其他应用可能自行提交或执行粘贴内容。</small></p>
+</html>

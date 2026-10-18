@@ -1,0 +1,54 @@
+# Build outputs and dependencies
+/bin/
+/frontend/node_modules/
+/frontend/dist/
+*.test
+*.exe
+*.syso
+
+# Local tooling and caches
+/.claude/
+/.codex/
+/.agents/
+.venv/
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+
+# Runtime configuration and credentials
+.env
+.env.*
+!.env.example
+config.json
+config.json.*
+config.*.json
+*.credentials.json
+*.key
+*.pem
+
+# Local reports and media (fixtures must be added explicitly)
+/test-results/
+/playwright-report/
+/screenshots/
+/recordings/
+/reports/
+/docs/acceptance/
+/docs/archive/
+/docs/*ACCEPTANCE_*.md
+/docs/WINDOWS_DEPLOYMENT_*.md
+/docs/ICON_FIX_*.md
+*.wav
+*.pcm
+*.mp3
+*.flac
+*.ogg
+*.log
+*.tmp
+*.bak
+*.dmp
+
+# OS metadata
+*:Zone.Identifier
+.DS_Store
+Thumbs.db
+Desktop.ini
