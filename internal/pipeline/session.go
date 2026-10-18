@@ -8,6 +8,7 @@ import (
 	"voice_input/internal/app"
 	"voice_input/internal/asr"
 	"voice_input/internal/audio"
+	"voice_input/internal/i18n"
 	"voice_input/internal/llm"
 	"voice_input/internal/netapi"
 	"voice_input/internal/search"
@@ -15,6 +16,7 @@ import (
 )
 
 type Session struct {
+	Locale    i18n.Locale
 	Recorder  audio.Recorder
 	ASR       asr.Provider
 	LLM       llm.Provider
@@ -27,12 +29,13 @@ type Session struct {
 
 func New(ctx context.Context, id string, intent app.Intent, cfg settings.Config, vault settings.Vault, notify func(app.Stage, float64)) (app.Processor, app.TaskOptions, error) {
 	cfg = cfg.Normalized()
+	locale := app.TaskLocale(ctx, i18n.Resolve(cfg.UILanguage))
 	if err := cfg.Validate(); err != nil {
-		return nil, app.TaskOptions{Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent)}, err
+		return nil, app.TaskOptions{Locale: locale, Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent)}, err
 	}
-	options := app.TaskOptions{Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent), RecordLimit: time.Duration(cfg.Recording.MaxSeconds) * time.Second, Timeout: time.Duration(cfg.LLM.TaskTimeoutSeconds) * time.Second}
+	options := app.TaskOptions{Locale: locale, Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent), RecordLimit: time.Duration(cfg.Recording.MaxSeconds) * time.Second, Timeout: time.Duration(cfg.LLM.TaskTimeoutSeconds) * time.Second}
 	if !intent.Valid() {
-		return nil, options, errors.New("任务用途无效")
+		return nil, options, i18n.Error("app.intent")
 	}
 	if cfg.Mode == "asr_mock_llm" && intent == app.Dialogue {
 		return nil, options, netapi.Fail("llm", "mode")
@@ -53,13 +56,13 @@ func New(ctx context.Context, id string, intent app.Intent, cfg settings.Config,
 	if err != nil {
 		return nil, options, err
 	}
-	session := &Session{Recorder: audio.New(), ASR: adapter, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
+	session := &Session{Locale: locale, Recorder: audio.New(), ASR: adapter, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
 	if cfg.Mode == "live" {
 		key, err := vault.Get("llm")
 		if err != nil || settings.ValidKey(key) != nil {
 			return nil, options, netapi.Fail("llm", "config")
 		}
-		completion := llm.Compatible{Client: client, Config: cfg.LLM, Key: key, MaxSearchCalls: cfg.Exa.MaxCalls, OnStage: func(stage string) {
+		completion := llm.Compatible{Locale: locale, Client: client, Config: cfg.LLM, Key: key, MaxSearchCalls: cfg.Exa.MaxCalls, OnStage: func(stage string) {
 			if notify != nil {
 				notify(app.Stage(stage), 0)
 			}
@@ -102,7 +105,7 @@ func (s *Session) Complete(ctx context.Context, raw string) (app.Result, error) 
 
 func (s *Session) CompleteConversation(ctx context.Context, conversation app.Conversation) (app.Result, error) {
 	if !s.Intent.Valid() {
-		return app.Result{}, errors.New("任务用途无效")
+		return app.Result{}, i18n.Error("app.intent")
 	}
 	if s.Intent == app.Dictation && len(conversation.Clarifications) != 0 {
 		return app.Result{}, netapi.Fail("llm", "request")
@@ -116,7 +119,8 @@ func (s *Session) CompleteConversation(ctx context.Context, conversation app.Con
 	if s.Config.Mode == "asr_mock_llm" {
 		// M2 mode deliberately passes through real ASR rather than replacing the
 		// user's speech with a fixed sample. No semantic API is called.
-		return app.Result{Status: "insert", Text: conversation.Original, Notice: "ASR 直通模式：未调用 LLM"}, nil
+		message := i18n.M("app.asr_direct")
+		return app.Result{Status: "insert", Text: conversation.Original, Notice: message.Text(s.Locale), NoticeMessage: &message}, nil
 	}
 	turns := make([]llm.Clarification, len(conversation.Clarifications))
 	for i, turn := range conversation.Clarifications {

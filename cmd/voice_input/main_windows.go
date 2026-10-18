@@ -8,11 +8,13 @@ import (
 	"flag"
 	"io/fs"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"voice_input/internal/branding"
 	"voice_input/internal/hotkey"
+	"voice_input/internal/i18n"
 	"voice_input/internal/instance"
 	"voice_input/internal/pipeline"
 	"voice_input/internal/popup"
@@ -32,14 +34,14 @@ func main() {
 		return
 	}
 	if err != nil {
-		startupFatal("无法获取单实例锁")
+		startupFatal(i18n.M("popup.feedback.instance_failed"))
 		return
 	}
 	defer lock.Close()
 	flag.Parse()
 	store, err := settings.OpenDefault()
 	if err != nil {
-		startupFatal(err.Error())
+		startupFatal(i18n.FromError(err, "popup.feedback.config_open_failed"))
 		return
 	}
 	vault := settings.NativeVault{}
@@ -48,13 +50,14 @@ func main() {
 	}, wininput.Native{}, 30*time.Second)
 	desktop := &Desktop{controller: controller, store: store, vault: vault}
 	cfg := store.Get()
+	desktop.locale.Store(i18n.Resolve(cfg.UILanguage))
 	if err := cfg.ValidateReady(); err != nil {
-		desktop.startupError.Store(err.Error())
+		desktop.setStartupError(i18n.FromError(err, "popup.feedback.settings_invalid"))
 	}
 	controller.Presentation(cfg.Mode, cfg.Hotkey, cfg.AIHotkey)
 	assets, err := fs.Sub(frontend.Assets, "dist")
 	if err != nil {
-		log.Fatal("前端资源不可用；请先 npm run build")
+		log.Fatal(i18n.M("popup.feedback.assets_unavailable").Text(desktop.appliedLocale()))
 	}
 	a := application.New(application.Options{
 		Name: branding.Name, Description: branding.Name, Icon: branding.PNG(),
@@ -72,28 +75,30 @@ func main() {
 				return 0, false
 			},
 		},
-		ErrorHandler: func(_ error) { desktop.startupError.Store("桌面或快捷键初始化失败，请检查设置") },
+		ErrorHandler: func(_ error) { desktop.setStartupError(i18n.M("popup.feedback.desktop_failed")) },
 	})
 	desktop.app = a
 	statusPopup := popup.New(popup.Actions{
 		Close: controller.Close, Settings: desktop.ShowSettings, Copy: desktop.CopyResult, KeepOpen: controller.KeepOpen, Reply: controller.Reply,
 	})
+	desktop.popup = statusPopup
+	statusPopup.SetLocale(desktop.appliedLocale())
 	tray := a.SystemTray.New()
 	desktop.tray = tray
 	tray.SetIcon(branding.PNG())
 	tray.SetTooltip(shortcutTooltip(cfg))
 	menu := a.NewMenu()
 	menu.Add(branding.Name).SetEnabled(false)
-	menu.Add("设置").OnClick(func(_ *application.Context) { desktop.ShowSettings() })
-	menu.Add("取消任务 / 隐藏浮窗").OnClick(func(_ *application.Context) { controller.Close() })
+	desktop.traySettings = menu.Add(i18n.M("popup.tray.settings").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { desktop.ShowSettings() })
+	desktop.trayCancel = menu.Add(i18n.M("popup.tray.cancel").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { controller.Close() })
 	menu.AddSeparator()
-	menu.Add("退出").OnClick(func(_ *application.Context) { controller.Close(); a.Quit() })
+	desktop.trayQuit = menu.Add(i18n.M("popup.tray.quit").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { controller.Close(); a.Quit() })
 	tray.SetMenu(menu)
 	tray.OnClick(func() { desktop.ShowSettings() })
 	for _, intent := range []core.Intent{core.Dictation, core.Dialogue} {
 		key, _ := hotkey.Parse(cfg.HotkeyFor(intent))
 		if err := a.GlobalShortcut.Register(key.Accelerator(), func() { desktop.hotkeyFired(key) }); err != nil {
-			desktop.startupError.Store(intent.Label() + "快捷键无法注册")
+			desktop.setStartupError(i18n.M("popup.feedback.shortcut_failed", "shortcuts", cfg.HotkeyFor(intent)))
 		}
 	}
 	// Normal startup remains tray-only; incomplete settings and startup failures
@@ -102,17 +107,17 @@ func main() {
 	var startOnce sync.Once
 	a.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 		startOnce.Do(func() { close(started) })
-		missing := ""
+		missing := []string{}
 		for _, intent := range []core.Intent{core.Dictation, core.Dialogue} {
 			key, _ := hotkey.Parse(cfg.HotkeyFor(intent))
 			if !a.GlobalShortcut.IsRegistered(key.Accelerator()) {
-				missing += intent.Label() + "（" + cfg.HotkeyFor(intent) + "） "
+				missing = append(missing, cfg.HotkeyFor(intent))
 			}
 		}
-		if missing != "" {
-			desktop.startupError.Store("快捷键注册失败：" + missing)
+		if len(missing) != 0 {
+			desktop.setStartupError(i18n.M("popup.feedback.shortcut_failed", "shortcuts", strings.Join(missing, " / ")))
 		}
-		if desktop.StartupError() != "" {
+		if desktop.startupError.Load() != nil {
 			desktop.ShowSettings()
 		}
 	})
@@ -136,9 +141,9 @@ func main() {
 						return
 					default:
 					}
-					state := controller.Snapshot()
+					state := desktop.Snapshot()
 					if err := statusPopup.Update(state, desktop.popupAnchor); err != nil {
-						desktop.startupError.Store("浮窗初始化失败，请重启程序")
+						desktop.setStartupError(i18n.M("popup.feedback.popup_failed"))
 						controller.Close()
 						return
 					}
@@ -148,6 +153,6 @@ func main() {
 		}
 	}()
 	if err := a.Run(); err != nil {
-		log.Fatal(branding.Name + "启动失败，请检查 WebView2 Runtime")
+		log.Fatal(i18n.M("popup.feedback.start_failed", "name", branding.Name).Text(desktop.appliedLocale()))
 	}
 }

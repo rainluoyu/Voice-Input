@@ -27,7 +27,8 @@ var requiredDocuments = []string{
 	"LICENSE", "README.md", "README.zh-CN.md", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md",
 	"docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md",
 	"docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html",
-	"docs/images/settings.png", "docs/images/prompts.png", "docs/images/dialogue.png",
+	"docs/images/en/settings.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
+	"docs/images/zh-CN/settings.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png",
 }
 
 func writeFixture(t *testing.T, root, path, content string) {
@@ -132,7 +133,8 @@ func TestPortableArchivesAndExecutableValidation(t *testing.T) {
 				"config.json", "bin/config.json", ".env", ".env.local", ".git/config",
 				".claude/worktrees/local/notes.md", "reports/acceptance.json", "recordings/private.wav",
 				"screenshots/local.png", "docs/MILESTONE_STATUS.md", "docs/acceptance/local.json",
-				"docs/images/unapproved.png", "docs/images/nested/settings.png",
+				"docs/images/unapproved.png", "docs/images/nested/settings.png", "docs/images/settings.png",
+				"docs/images/en/private.png", "docs/images/zh-CN/nested/dialogue.png",
 				"docs/WINDOWS_DEPLOYMENT_2000-01-01.md", "voice_input.md", "voice_input.md:Zone.Identifier",
 			} {
 				if strings.Contains(path, ":") && os.PathSeparator == '\\' {
@@ -164,7 +166,8 @@ func TestPortableArchivesAndExecutableValidation(t *testing.T) {
 	if stableExe == "" {
 		t.Fatal("stable fixture unavailable")
 	}
-	for _, path := range []string{"LICENSE", "README.zh-CN.md", "docs/images/settings.png", "docs/images/prompts.png", "docs/images/dialogue.png"} {
+	for _, path := range []string{"LICENSE", "README.zh-CN.md", "docs/images/en/settings.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
+		"docs/images/zh-CN/settings.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png"} {
 		t.Run("missing-"+path, func(t *testing.T) {
 			if err := os.Remove(filepath.Join(root, path)); err != nil {
 				t.Fatal(err)

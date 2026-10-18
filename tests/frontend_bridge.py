@@ -25,10 +25,12 @@ requests = []
 fail_settings_read = False
 hold_copy = False
 pending_copy = []
+applied_locale = "zh-CN"
+prompt_defaults_by_locale = {"zh-CN": {"dictation": "修正语病、成语和冗余表达，保留原意。", "dialogue": "理解请求，生成用户需要的正文。"}, "en": {"dictation": "Polish speech without changing its meaning.", "dialogue": "Generate the requested body text."}}
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    context = browser.new_context(viewport={"width": 760, "height": 800})
+    context = browser.new_context(viewport={"width": 760, "height": 800}, locale="zh-CN")
     errors = []
 
     def route_request(route):
@@ -46,9 +48,9 @@ with sync_playwright() as p:
                 if fail_settings_read:
                     route.fulfill(status=500, content_type="application/json", body=json.dumps({"kind": "RuntimeError", "message": "fixture failure"}))
                     return
-                result = {"config": config, "keys": keys, "version": "1.4.2-rc.1", "prompt_defaults": {"dictation": "修正语病、成语和冗余表达，保留原意。", "dialogue": "理解请求，生成用户需要的正文。"}}
+                result = {"config": config, "keys": keys, "version": "1.4.2-rc.1", "locale": applied_locale, "system_locale": "zh-CN", "prompt_defaults": prompt_defaults_by_locale[applied_locale], "prompt_defaults_by_locale": prompt_defaults_by_locale}
             elif method == "GetPresentation":
-                result = {"mode": config["mode"], "hotkey": config["hotkey"], "ai_hotkey": config["ai_hotkey"]}
+                result = {"locale": applied_locale, "mode": config["mode"], "hotkey": config["hotkey"], "ai_hotkey": config["ai_hotkey"]}
             elif method == "Snapshot":
                 result = state
             elif method == "StartupError":
@@ -95,8 +97,8 @@ with sync_playwright() as p:
     assert page.locator("#save").is_enabled()
     assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
     page.locator("#tab-models").click()
-    assert page.title() == "真实语义输入"
-    assert page.locator("h1").inner_text() == "真实语义输入"
+    assert page.title() == "voice input"
+    assert page.locator("h1").inner_text() == "voice input"
     assert page.locator("#mode option[value=mock], #forced-note, #asr-protocol-hint, aside, .instruction").count() == 0
     assert page.locator("#asr-endpoint").get_attribute("aria-describedby") is None
     # Legacy fixtures omit provider; display multipart without replacing saved fields.
@@ -481,6 +483,120 @@ with sync_playwright() as p:
     page.wait_for_timeout(100)
     assert any(method == "ClosePopup" for method, _ in requests)
 
+    # Applied-language updates refresh chrome independently of task identity/revision.
+    def language(locale):
+        page.evaluate("data => window._wails.dispatchWailsEvent({name:'presentation:changed',data})", {"locale": locale, "mode": config["mode"], "hotkey": config["hotkey"], "ai_hotkey": config["ai_hotkey"]})
+        assert page.locator("html").get_attribute("lang") == locale
+        assert page.title() == "voice input"
+
+    dispatch({"revision": 40, "task_id": "locale-follow", "turn": 1, "intent": "dialogue", "stage": "done", "question": "", "raw_text": long_raw, "text": long_result, "notice": "已取消，不再回填", "notice_i18n": {"code": "app.cancelled"}, "sources": sources, "pinned": True})
+    assert_result_visible()
+    page.locator("#copy").click()
+    page.wait_for_function("document.querySelector('#copy-message').textContent==='已复制'")
+    page.locator("#popup-body").evaluate("node => node.scrollTop=0")
+    page.locator("#result").evaluate("node => { window.__resultNode=node; const range=document.createRange(); range.setStart(node.firstChild,0); range.setEnd(node.firstChild,4); const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range); }")
+    page.locator("#source-list li").first.evaluate("node => window.__sourceNode=node")
+    selected = page.evaluate("getSelection().toString()")
+    language("en")
+    page.wait_for_timeout(350)
+    assert page.locator("#popup-body").evaluate("node => node.scrollTop") == 0
+    assert page.locator("#result").evaluate("node => node===window.__resultNode")
+    assert page.locator("#source-list li").first.evaluate("node => node===window.__sourceNode")
+    assert page.evaluate("getSelection().toString()") == selected
+    assert page.locator("#copy-message").inner_text() == "Copied"
+    assert page.locator("#notice").inner_text() == "Cancelled; no further text will be inserted"
+    assert page.locator("#countdown").inner_text() == "Stays visible"
+    assert page.locator("#stage").inner_text() == "Text entered"
+    assert page.locator("#raw-label").inner_text() == "ASR transcript"
+    assert page.locator("#copy").inner_text() == "Copy"
+    assert page.locator("#settings").get_attribute("aria-label") == "Open settings"
+    assert page.locator("#settings").get_attribute("title") == "Settings"
+    assert page.locator("#close").get_attribute("aria-label") == "Close popup and cancel task"
+    assert page.locator("#close").get_attribute("title") == "Close / Cancel"
+    assert page.locator("#popup-body").get_attribute("aria-label") == "Task content"
+    assert page.locator("#result-section h2").inner_text() == "Final text"
+    assert page.locator("#sources summary").inner_text() == "Search evidence"
+    language("zh-CN")
+    assert page.locator("#copy-message").inner_text() == "已复制"
+    assert page.locator("#notice").inner_text() == "已取消，不再回填"
+    assert page.locator("#popup-body").evaluate("node => node.scrollTop") == 0
+    dispatch({"revision": 39, "stage": "recording"})
+    assert page.locator("#stage").inner_text() == "已输入", "locale updates must not reset the revision guard"
+    update["revision"] = 40
+
+    # User/model content is not translated, even when identical to an application notice.
+    user_text = "已取消，不再回填<img src=x onerror=window.__pwned=true>"
+    dispatch({"revision": 41, "text": "已取消，不再回填", "raw_text": user_text, "notice": "已取消，不再回填", "notice_i18n": None, "question": "已取消，不再回填", "stage": "clarify", "sources": [{"title": "已取消，不再回填", "url": "javascript:<img src=x>", "highlights": []}]})
+    language("en")
+    assert page.locator("#notice").inner_text() == "已取消，不再回填"
+    assert page.locator("#question").inner_text() == "已取消，不再回填"
+    assert page.locator("#raw").inner_text() == user_text
+    assert page.locator("#result").inner_text() == "已取消，不再回填"
+    assert page.locator("#source-list li").text_content() == "已取消，不再回填\njavascript:<img src=x>"
+    assert page.locator("#raw img, #source-list img, #source-list a").count() == 0
+    assert page.locator("#reply").inner_text() == "Voice reply"
+    assert page.locator("#question-section h2").inner_text() == "More information needed"
+    assert "to reply" in page.locator("#countdown").inner_text()
+    dispatch({"revision": 42, "stage": "recording", "replying": True, "turn": 2, "level": .1})
+    assert page.locator("#stage").inner_text() == "Recording reply"
+    assert page.locator("#reply").inner_text() == "Stop reply"
+    assert "to stop reply" in page.locator("#countdown").inner_text()
+    assert page.locator("#level").get_attribute("aria-label") == "Microphone level 80%"
+    dispatch({"revision": 43, "stage": "asr"})
+    assert page.locator("#stage").inner_text() == "Transcribing reply"
+    assert page.locator("#reply").inner_text() == "Processing…"
+    assert page.locator("#reply").is_disabled()
+    assert page.locator("#raw-label").inner_text() == "Transcript (including replies)"
+    dispatch({"revision": 44, "stage": "llm"})
+    assert page.locator("#stage").inner_text() == "Generating text"
+    dispatch({"revision": 45, "stage": "llm", "intent": "dictation", "question": "", "replying": False})
+    assert page.locator("#stage").inner_text() == "Polishing text"
+    stages = {"idle": "Ready", "recording": "Recording", "asr": "Transcribing", "search": "Checking facts", "injecting": "Typing", "done": "Text entered", "skip": "No output needed", "clarify": "More information needed", "error": "Input incomplete", "cancelled": "Cancelled"}
+    for revision, (stage, label) in enumerate(stages.items(), 46):
+        dispatch({"revision": revision, "stage": stage, "pinned": False, "hide_at": int(time.time()*1000)+30000, "mode": "asr_mock_llm"})
+        assert page.locator("#stage").inner_text() == label
+        if stage not in ("idle", "recording", "clarify"):
+            assert "Hides in " in page.locator("#countdown").inner_text()
+        if stage == "recording":
+            assert "to stop recording" in page.locator("#countdown").inner_text()
+    assert "ASR passthrough" in page.locator("#mode-badge").inner_text()
+    dispatch({"revision": 60, "stage": "error", "notice": "unsafe provider error", "notice_i18n": {"code": "not.registered"}})
+    assert page.locator("#notice").inner_text() == "Operation failed. Please try again."
+    assert "unsafe provider error" not in page.locator("body").inner_text()
+
+    # A pending copy keeps its task identity across a chrome-only language change.
+    hold_copy = True
+    page.locator("#copy").click()
+    for _ in range(100):
+        if pending_copy:
+            break
+        page.wait_for_timeout(20)
+    assert pending_copy
+    language("zh-CN")
+    pending_copy.pop(0).fulfill(status=200, content_type="application/json", body="null")
+    hold_copy = False
+    page.wait_for_function("document.querySelector('#copy-message').textContent==='已复制'")
+    language("en")
+    assert page.locator("#copy-message").inner_text() == "Copied"
+    dispatch({"revision": 61, "task_id": "locale-after-copy", "stage": "recording", "raw_text": "", "text": "", "notice": "", "notice_i18n": None, "sources": [], "hide_at": 0})
+    assert page.locator("#copy-message").is_hidden()
+    # English 20px preserves the B+A+D surfaces at real narrow/minimum/default widths.
+    large_text = page.add_style_tag(content="body *{font-size:20px!important}")
+    for viewport_index, (width, height) in enumerate(((360, 800), (520, 500), (760, 800))):
+        page.set_viewport_size({"width": width, "height": height})
+        for revision, stage, question, text_value, expected_view, expected_height in (
+            (62, "recording", "", "", "working", 240),
+            (63, "clarify", "保持用户问题原文", "", "question", 400),
+            (64, "done", "", code, "result", 560),
+        ):
+            dispatch({"revision": revision+viewport_index*3, "stage": stage, "intent": "dialogue", "question": question, "text": text_value})
+            presentation(expected_view, expected_height)
+            for selector in (".brand strong", "#stage", "#popup-actions button:visible"):
+                assert page.locator(selector).evaluate_all("nodes => nodes.every(node => node.scrollWidth<=node.clientWidth)"), selector
+    large_text.evaluate("node => node.remove()")
+    assert not page.evaluate("Boolean(window.__pwned)")
+    language("zh-CN")
+
     fail_settings_read = True
     page.goto("http://wails.localhost/?view=settings")
     page.wait_for_load_state("networkidle")
@@ -488,4 +604,4 @@ with sync_playwright() as p:
     assert "禁用保存" in page.locator("#bridge-error").inner_text()
     assert not errors, errors
     browser.close()
-print("PASS: B+A+D state/size matrix, real-level bars, footer actions, copy feedback isolation, long compact errors, reduced motion; dual shortcuts/settings/keys/devices, AI replies, pure multiline/code rendering, revision/RAF/result-follow guards and XSS")
+print("PASS: B+A+D state/size matrix and existing Revision/TaskID/RAF/result-follow guards; bilingual stages, countdowns and ARIA; independent presentation refresh preserves selection/scroll/copy feedback; user/model/source text and XSS; English 20px at 360/520/760; mocked settings/keys/devices/replies")

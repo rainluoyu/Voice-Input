@@ -1,10 +1,10 @@
-# 真实语义输入 · True Semantic Input
+# voice input
 
 [English](README.md) | **中文**
 
 Windows 语音输入工具：用不同快捷键选择**语音润色**或 **AI 对话**，把口述整理成文本，或直接生成请求所需的正文。结果输入处理完成时的当前活动位置。**不自动按 Enter，不额外发送消息。**
 
-应用界面目前为中文。
+界面支持简体中文和英文。在“输入”设置中选择语言或跟随系统，保存后应用到桌面浮窗和托盘。
 
 ## 两种用途
 
@@ -43,15 +43,15 @@ Windows 语音输入工具：用不同快捷键选择**语音润色**或 **AI �
 
 **输入设置：选择快捷键、麦克风，补充背景信息。**
 
-![输入设置示例](docs/images/settings.png)
+![输入设置示例](docs/images/zh-CN/settings.png)
 
 **独立提示词：分别调整润色程度和 AI 对话规则。**
 
-![自定义提示词示例](docs/images/prompts.png)
+![自定义提示词示例](docs/images/zh-CN/prompts.png)
 
 **语音澄清：补充关键信息，再得到需要的正文。**
 
-![AI 对话澄清与最终正文示例](docs/images/dialogue.png)
+![AI 对话澄清与最终正文示例](docs/images/zh-CN/dialogue.png)
 
 ## 使用前请注意
 

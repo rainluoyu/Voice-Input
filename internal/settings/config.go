@@ -2,7 +2,6 @@ package settings
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,22 +10,24 @@ import (
 	"unicode/utf8"
 
 	"voice_input/internal/hotkey"
+	"voice_input/internal/i18n"
 	"voice_input/internal/netapi"
 	"voice_input/internal/task"
 )
 
 type Config struct {
-	Version   int       `json:"version"`
-	Mode      string    `json:"mode"`
-	Hotkey    string    `json:"hotkey"`
-	AIHotkey  string    `json:"ai_hotkey"`
-	Recording Recording `json:"recording"`
-	ASR       ASR       `json:"asr"`
-	LLM       LLM       `json:"llm"`
-	Exa       Exa       `json:"exa"`
-	Profile   Profile   `json:"profile"`
-	Popup     Popup     `json:"popup"`
-	Privacy   Privacy   `json:"privacy"`
+	UILanguage string    `json:"ui_language"`
+	Version    int       `json:"version"`
+	Mode       string    `json:"mode"`
+	Hotkey     string    `json:"hotkey"`
+	AIHotkey   string    `json:"ai_hotkey"`
+	Recording  Recording `json:"recording"`
+	ASR        ASR       `json:"asr"`
+	LLM        LLM       `json:"llm"`
+	Exa        Exa       `json:"exa"`
+	Profile    Profile   `json:"profile"`
+	Popup      Popup     `json:"popup"`
+	Privacy    Privacy   `json:"privacy"`
 }
 type Recording struct {
 	DeviceID   string `json:"device_id"`
@@ -81,6 +82,9 @@ func (p Profile) Text() string {
 
 // Normalized migrates in memory only; opening an old config never rewrites it.
 func (c Config) Normalized() Config {
+	if c.UILanguage == "" {
+		c.UILanguage = "auto"
+	}
 	if c.Mode == "mock" {
 		c.Mode = "live"
 	}
@@ -106,34 +110,39 @@ func (c Config) HotkeyFor(intent task.Intent) string {
 }
 
 func Default() Config {
-	return Config{Version: 1, Mode: "live", Hotkey: "Ctrl+Alt+R", AIHotkey: "Ctrl+Alt+A", Recording: Recording{"default", 120}, ASR: ASR{Provider: "openai_compatible", TimeoutSeconds: 45}, LLM: LLM{TimeoutSeconds: 45, TaskTimeoutSeconds: 90, OutputFormat: "json_schema", MaxToolRounds: 2}, Exa: Exa{SearchType: "instant", MaxCalls: 2, TimeoutSeconds: 10}, Popup: Popup{AutoHideSeconds: 30, AlwaysOnTop: true}}
+	return Config{UILanguage: "auto", Version: 1, Mode: "live", Hotkey: "Ctrl+Alt+R", AIHotkey: "Ctrl+Alt+A", Recording: Recording{"default", 120}, ASR: ASR{Provider: "openai_compatible", TimeoutSeconds: 45}, LLM: LLM{TimeoutSeconds: 45, TaskTimeoutSeconds: 90, OutputFormat: "json_schema", MaxToolRounds: 2}, Exa: Exa{SearchType: "instant", MaxCalls: 2, TimeoutSeconds: 10}, Popup: Popup{AutoHideSeconds: 30, AlwaysOnTop: true}}
 }
 func (c Config) Validate() error {
+	switch c.UILanguage {
+	case "", "auto", string(i18n.EN), string(i18n.ZhCN):
+	default:
+		return i18n.Error("settings.ui_language")
+	}
 	if c.Version != 1 {
-		return errors.New("配置版本不受支持")
+		return i18n.Error("settings.version")
 	}
 	if c.Mode != "asr_mock_llm" && c.Mode != "live" {
-		return errors.New("工作模式无效")
+		return i18n.Error("settings.mode")
 	}
 	keys := make([]hotkey.Combination, 0, 2)
 	for _, raw := range []string{c.Hotkey, c.AIHotkey} {
 		if len(raw) == 0 || len(raw) > 80 {
-			return errors.New("请分别填写语音润色与 AI 对话快捷键")
+			return i18n.Error("settings.hotkeys_required")
 		}
 		key, err := hotkey.Parse(raw)
 		if err != nil {
 			return err
 		}
 		if key.Modifiers == 2 && key.Key == 'V' {
-			return errors.New("Ctrl+V 用于多行粘贴，不能设置为录音快捷键")
+			return i18n.Error("settings.paste_hotkey")
 		}
 		keys = append(keys, key)
 	}
 	if keys[0] == keys[1] {
-		return errors.New("语音润色与 AI 对话快捷键不能相同")
+		return i18n.Error("settings.hotkeys_same")
 	}
 	if c.Recording.DeviceID == "" || len(c.Recording.DeviceID) > 2048 || c.Recording.MaxSeconds < 1 || c.Recording.MaxSeconds > 300 {
-		return errors.New("录音时长应在 1–300 秒之间，且设备不能为空")
+		return i18n.Error("settings.recording")
 	}
 	for _, raw := range []string{c.ASR.Endpoint, c.LLM.BaseURL} {
 		if raw != "" {
@@ -144,50 +153,50 @@ func (c Config) Validate() error {
 	}
 	for _, text := range []string{c.ASR.Model, c.LLM.Model} {
 		if len(text) > 200 || strings.ContainsAny(text, "\r\n") {
-			return errors.New("模型名称无效")
+			return i18n.Error("settings.model")
 		}
 	}
 	switch c.ASR.Provider {
 	case "", "openai_compatible":
 	case "mimo":
 		if c.ASR.Language != "" && c.ASR.Language != "auto" && c.ASR.Language != "zh" && c.ASR.Language != "en" {
-			return errors.New("MiMo 语言只支持留空、auto、zh 或 en")
+			return i18n.Error("settings.mimo_language")
 		}
 	default:
-		return errors.New("ASR 服务只支持 openai_compatible 或 mimo")
+		return i18n.Error("settings.asr_provider")
 	}
 	if len(c.ASR.Language) > 20 {
-		return errors.New("语言字段过长")
+		return i18n.Error("settings.asr_language")
 	}
 	if c.ASR.TimeoutSeconds < 5 || c.ASR.TimeoutSeconds > 180 || c.LLM.TimeoutSeconds < 5 || c.LLM.TimeoutSeconds > 180 || c.LLM.TaskTimeoutSeconds < 10 || c.LLM.TaskTimeoutSeconds > 300 {
-		return errors.New("服务超时应在 5–180 秒，任务超时应在 10–300 秒")
+		return i18n.Error("settings.timeouts")
 	}
 	if c.LLM.OutputFormat != "json_schema" && c.LLM.OutputFormat != "json_object" {
-		return errors.New("输出格式只支持 json_schema 或 json_object")
+		return i18n.Error("settings.output_format")
 	}
 	if c.LLM.MaxToolRounds < 0 || c.LLM.MaxToolRounds > 8 {
-		return errors.New("工具轮数应在 0–8 轮之间")
+		return i18n.Error("settings.tool_rounds")
 	}
 	for _, prompt := range []string{c.LLM.DictationPrompt, c.LLM.DialoguePrompt} {
 		if !utf8.ValidString(prompt) || strings.ContainsRune(prompt, 0) || utf8.RuneCountInString(prompt) > 16000 {
-			return errors.New("提示词应为有效文本且不超过 16000 字")
+			return i18n.Error("settings.prompt")
 		}
 	}
 	if c.Exa.SearchType != "instant" && c.Exa.SearchType != "fast" {
-		return errors.New("搜索类型只支持 instant 或 fast")
+		return i18n.Error("settings.search_type")
 	}
 	if c.Exa.MaxCalls < 1 || c.Exa.MaxCalls > 8 || c.Exa.TimeoutSeconds < 8 || c.Exa.TimeoutSeconds > 15 {
-		return errors.New("搜索最多调用 1–8 次，超时 8–15 秒")
+		return i18n.Error("settings.search_budget")
 	}
 	if c.Popup.AutoHideSeconds != 30 {
-		return errors.New("当前版本终态自动隐藏固定为 30 秒")
+		return i18n.Error("settings.auto_hide")
 	}
 	if c.Privacy.SaveHistory || c.Privacy.LogText {
-		return errors.New("当前版本不允许保存历史或记录用户文本")
+		return i18n.Error("settings.privacy")
 	}
 	background := c.Profile.Text()
 	if !utf8.ValidString(background) || strings.ContainsRune(background, 0) || utf8.RuneCountInString(background) > 16000 {
-		return errors.New("背景信息应为有效文本且不超过 16000 字")
+		return i18n.Error("settings.background")
 	}
 	_, err := configJSON(c.Normalized())
 	return err
@@ -199,10 +208,10 @@ const maxConfigBytes = 512 << 10
 func configJSON(c Config) ([]byte, error) {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return nil, errors.New("配置编码失败")
+		return nil, i18n.Error("settings.encode")
 	}
 	if len(data)+1 > maxConfigBytes {
-		return nil, errors.New("配置文件超过 512 KiB")
+		return nil, i18n.Error("settings.large")
 	}
 	return append(data, '\n'), nil
 }
@@ -213,10 +222,10 @@ func (c Config) ValidateReady() error {
 		return err
 	}
 	if c.ASR.Endpoint == "" || strings.TrimSpace(c.ASR.Model) == "" {
-		return errors.New("请配置 ASR 地址与模型")
+		return i18n.Error("settings.asr_required")
 	}
 	if c.Mode == "live" && (c.LLM.BaseURL == "" || strings.TrimSpace(c.LLM.Model) == "") {
-		return errors.New("请配置 LLM 地址与模型")
+		return i18n.Error("settings.llm_required")
 	}
 	return nil
 }
@@ -236,18 +245,18 @@ func open(path string, missingOK bool) (*Store, error) {
 		return s, nil
 	}
 	if err != nil {
-		return nil, errors.New("无法读取配置文件")
+		return nil, i18n.Error("settings.read")
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err != nil {
-		return nil, errors.New("无法读取配置文件")
+		return nil, i18n.Error("settings.read")
 	}
 	if len(data) > maxConfigBytes {
-		return nil, errors.New("配置文件超过 512 KiB")
+		return nil, i18n.Error("settings.large")
 	}
 	if err := netapi.StrictJSON(data, &s.config); err != nil {
-		return nil, errors.New("配置文件格式无效；请备份后修复，不会覆盖旧文件")
+		return nil, i18n.Error("settings.format")
 	}
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(data, &fields)
@@ -268,7 +277,7 @@ func (s *Store) Get() Config { s.mu.RLock(); defer s.mu.RUnlock(); return s.conf
 func (s *Store) Save(c Config) error {
 	return s.saveWithPublish(c, func(temp, target string) error {
 		if os.Rename(temp, target) != nil {
-			return errors.New("无法替换配置文件，旧配置未改变")
+			return i18n.Error("settings.replace")
 		}
 		return nil
 	})
@@ -287,11 +296,11 @@ func (s *Store) saveWithPublish(c Config, publish func(temp, target string) erro
 	defer s.mu.Unlock()
 	dir := filepath.Dir(s.path)
 	if os.MkdirAll(dir, 0700) != nil {
-		return errors.New("无法创建配置目录")
+		return i18n.Error("settings.mkdir")
 	}
 	file, err := os.CreateTemp(dir, ".config-*")
 	if err != nil {
-		return errors.New("无法写入配置")
+		return i18n.Error("settings.write")
 	}
 	temp := file.Name()
 	defer os.Remove(temp)
@@ -303,7 +312,7 @@ func (s *Store) saveWithPublish(c Config, publish func(temp, target string) erro
 	}
 	closeErr := file.Close()
 	if err != nil || closeErr != nil {
-		return errors.New("配置写入失败，旧配置未改变")
+		return i18n.Error("settings.write_failed")
 	}
 	if err := publish(temp, s.path); err != nil {
 		return err

@@ -1,10 +1,10 @@
-# True Semantic Input · 真实语义输入
+# voice input
 
 **English** | [中文](README.zh-CN.md)
 
 A Windows voice-input utility with two separate shortcuts: **polish what you say** or **ask AI to produce the text you need**. Results are inserted at the currently active input location. The application does not press Enter or send messages automatically.
 
-The application interface is currently in Chinese.
+The interface supports English and Simplified Chinese. Choose a language in Input settings, or follow the system language; save to apply it to the desktop popup and tray.
 
 ## Two modes
 
@@ -43,15 +43,15 @@ These are browser-rendered Web previews with fictional data; the native Windows 
 
 **Input settings: choose shortcuts and a microphone, and supply background context.**
 
-![Example input settings](docs/images/settings.png)
+![Example input settings](docs/images/en/settings.png)
 
 **Separate prompts: adjust voice-polishing style and AI dialogue instructions.**
 
-![Example custom prompts](docs/images/prompts.png)
+![Example custom prompts](docs/images/en/prompts.png)
 
 **Voice clarification: supply missing details, then get the text you need.**
 
-![Example AI clarification and final text](docs/images/dialogue.png)
+![Example AI clarification and final text](docs/images/en/dialogue.png)
 
 ## Before you use it
 

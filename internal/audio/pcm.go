@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math"
 	"time"
+
+	"voice_input/internal/i18n"
 )
 
 const SampleRate = 16000
@@ -14,8 +16,9 @@ var ErrUnavailable = errors.New("麦克风不可用：检查设备、隐私权�
 var ErrQuiet = errors.New("录音过短或接近静音；请检查麦克风后重试")
 
 type Device struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	NameI18n *i18n.Message `json:"name_i18n,omitempty"`
 }
 type Data struct {
 	WAV      []byte

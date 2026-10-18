@@ -11,6 +11,8 @@ import (
 	"time"
 	"unsafe"
 
+	"voice_input/internal/i18n"
+
 	"github.com/go-ole/go-ole"
 	"github.com/moutend/go-wca/pkg/wca"
 	"golang.org/x/sys/windows"
@@ -44,17 +46,18 @@ func deviceID(d *wca.IMMDevice) (string, error) {
 	defer ole.CoTaskMemFree(uintptr(unsafe.Pointer(value)))
 	return windows.UTF16PtrToString(value), nil
 }
-func deviceName(d *wca.IMMDevice) string {
+func deviceName(d *wca.IMMDevice) (string, *i18n.Message) {
+	fallback := i18n.M("popup.device.microphone")
 	var store *wca.IPropertyStore
 	if d.OpenPropertyStore(wca.STGM_READ, &store) != nil || store == nil {
-		return "麦克风"
+		return fallback.Text(i18n.ZhCN), &fallback
 	}
 	defer store.Release()
 	var value wca.PROPVARIANT
 	if store.GetValue(&wca.PKEY_Device_FriendlyName, &value) != nil || value.VT != 31 || value.Val == 0 {
-		return "麦克风"
+		return fallback.Text(i18n.ZhCN), &fallback
 	}
-	return value.String() // go-wca frees the LPWSTR allocated by the property store
+	return value.String(), nil // go-wca frees the LPWSTR allocated by the property store
 }
 func Devices() ([]Device, error) {
 	if !devicesMu.TryLock() {
@@ -81,7 +84,8 @@ func Devices() ([]Device, error) {
 	if collection.GetCount(&count) != nil || count > 256 {
 		return nil, ErrUnavailable
 	}
-	result := []Device{{ID: "default", Name: "系统默认麦克风"}}
+	defaultName := i18n.M("popup.device.default")
+	result := []Device{{ID: "default", Name: defaultName.Text(i18n.ZhCN), NameI18n: &defaultName}}
 	for i := uint32(0); i < count; i++ {
 		var d *wca.IMMDevice
 		if collection.Item(i, &d) != nil || d == nil {
@@ -89,7 +93,8 @@ func Devices() ([]Device, error) {
 		}
 		id, err := deviceID(d)
 		if err == nil {
-			result = append(result, Device{ID: id, Name: deviceName(d)})
+			name, message := deviceName(d)
+			result = append(result, Device{ID: id, Name: name, NameI18n: message})
 		}
 		d.Release()
 	}

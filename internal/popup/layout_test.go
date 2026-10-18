@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"voice_input/internal/app"
+	"voice_input/internal/i18n"
 )
 
 func TestDisplayClassStageMatrix(t *testing.T) {
@@ -137,6 +138,32 @@ func TestQuestionResetsBodyWithoutRefollowingResize(t *testing.T) {
 				t.Fatalf("reset=%v want=%v", got, tc.reset)
 			}
 		})
+	}
+}
+
+func TestBilingualLayoutKeepsGeometryAndLargerSettings(t *testing.T) {
+	for _, dpi := range []int32{96, 120, 144, 192, 240} {
+		for _, s := range []app.State{
+			{Stage: app.Recording},
+			{Stage: app.Clarify, Intent: app.Dialogue, Question: "业务问题"},
+			{Stage: app.Done, Text: "Business result"},
+		} {
+			bounds := popupPlacement(s, dpi, rect{0, 0, 1920, 1080})
+			client := rect{0, 0, bounds.width(), bounds.height()}
+			baseline := popupLayout(s, dpi, client)
+			if baseline.Settings.width() != scale(88, dpi) || baseline.Settings.height() != scale(30, dpi) {
+				t.Fatal("Settings must gain 44 DIP for its English label", baseline.Settings)
+			}
+			for _, locale := range []i18n.Locale{i18n.EN, i18n.ZhCN} {
+				if label := i18n.M("popup.button.settings").Text(locale); label == "" || label == "popup.button.settings" {
+					t.Fatal("missing Settings label", locale)
+				}
+				stageLabelForLocale(s, locale)
+				if l := popupLayout(s, dpi, client); l != baseline || popupPlacement(s, dpi, rect{0, 0, 1920, 1080}) != bounds {
+					t.Fatal("language changed fixed geometry or anchoring", locale)
+				}
+			}
+		}
 	}
 }
 

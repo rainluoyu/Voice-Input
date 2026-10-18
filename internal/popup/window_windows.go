@@ -14,6 +14,7 @@ import (
 
 	"voice_input/internal/app"
 	"voice_input/internal/branding"
+	"voice_input/internal/i18n"
 )
 
 var (
@@ -105,6 +106,7 @@ type paintStruct struct {
 type Window struct {
 	hwnd, target                   uintptr
 	state                          app.State
+	locale                         i18n.Locale
 	actions                        Actions
 	dpi                            int32
 	bodyFont, titleFont, smallFont uintptr
@@ -128,7 +130,22 @@ type Actions struct {
 var windowsByHandle = map[uintptr]*Window{}
 var windowCallback = windows.NewCallback(windowProc)
 
-func New(actions Actions) *Window { return &Window{actions: actions, dpi: 96} }
+func New(actions Actions) *Window { return &Window{actions: actions, dpi: 96, locale: i18n.ZhCN} }
+
+// SetLocale only repaints chrome and application-owned notices. It never shows,
+// repositions or recreates a window, or observes the result-follow identity.
+func (w *Window) SetLocale(locale i18n.Locale) {
+	w.locale = locale
+	w.state = app.Present(w.state, locale)
+	w.invalidate()
+}
+
+func (w *Window) label(code string, args ...string) string {
+	if code == "" {
+		return ""
+	}
+	return i18n.M(code, args...).Text(w.locale)
+}
 
 func (w *Window) create() error {
 	instance, _, _ := getModuleHandle.Call(0)
@@ -394,10 +411,10 @@ func (w *Window) draw(dc uintptr, l layout) {
 			uintptr(l.Icon.width()), uintptr(l.Icon.height()), 0, 0, 3) // DI_NORMAL
 	}
 	text(dc, w.bodyFont, foreground, branding.Name, l.Brand, 0x0020|0x0004)
-	text(dc, w.smallFont, muted, purposeLabel(w.state), l.Purpose, 0x0020|0x0004)
-	w.button(dc, l.Settings, "设置", "settings", true, false)
-	w.button(dc, l.Close, "×", "close", true, false)
-	text(dc, w.titleFont, foreground, stageLabel(w.state), l.Stage, 0x0020|0x0004)
+	text(dc, w.smallFont, muted, purposeLabelForLocale(w.state, w.locale), l.Purpose, 0x0020|0x0004)
+	w.button(dc, l.Settings, w.label("popup.button.settings"), "settings", true, false)
+	w.button(dc, l.Close, w.label("popup.button.close"), "close", true, false)
+	text(dc, w.titleFont, foreground, stageLabelForLocale(w.state, w.locale), l.Stage, 0x0020|0x0004)
 	if w.state.Stage == app.Recording {
 		bars := meterBars(w.state.Level)
 		for i, height := range bars {
@@ -412,27 +429,28 @@ func (w *Window) draw(dc uintptr, l layout) {
 		if math.IsNaN(level) || math.IsInf(level, 0) {
 			level = 0
 		}
-		text(dc, w.smallFont, muted, fmt.Sprintf("麦克风音量 %d%%", int(math.Round(max(0, min(1, level*8))*100))), l.Level, 0x0020)
+		percent := fmt.Sprint(int(math.Round(max(0, min(1, level*8)) * 100)))
+		text(dc, w.smallFont, muted, w.label("popup.level", "percent", percent), l.Level, 0x0020)
 	}
 	fill(dc, rect{l.Body.Left, l.Footer.Top, l.Body.Right, l.Footer.Top + max(1, w.unit(1))}, line)
-	w.lastFooter = footer(w.state, time.Now())
+	w.lastFooter = footerForLocale(w.state, time.Now(), w.locale)
 	text(dc, w.smallFont, muted, w.lastFooter, l.FooterStatus, 0x0020|0x0004)
-	text(dc, w.smallFont, muted, w.copyNotice, l.Feedback, 0x0020|0x0002|0x0004)
+	text(dc, w.smallFont, muted, w.label(w.copyNotice), l.Feedback, 0x0020|0x0002|0x0004)
 	if w.maxScroll > 0 {
-		text(dc, w.smallFont, muted, "滚轮查看全文", l.Hint, 0x0020|0x0004)
+		text(dc, w.smallFont, muted, w.label("popup.scroll_hint"), l.Hint, 0x0020|0x0004)
 	}
 	if l.Reply.width() > 0 {
-		label, action := "处理中…", replyAction(w.state)
+		code, action := "popup.button.processing", replyAction(w.state)
 		switch action {
 		case "reply-start":
-			label = "语音补充"
+			code = "popup.button.reply_start"
 		case "reply-stop":
-			label = "结束补充"
+			code = "popup.button.reply_stop"
 		}
-		w.button(dc, l.Reply, label, action, action != "", true)
+		w.button(dc, l.Reply, w.label(code), action, action != "", true)
 	}
 	if l.Copy.width() > 0 {
-		w.button(dc, l.Copy, "复制", "copy", true, true)
+		w.button(dc, l.Copy, w.label("popup.button.copy"), "copy", true, true)
 	}
 }
 
@@ -459,24 +477,24 @@ func (w *Window) drawBody(dc uintptr, l layout) (maxScroll, resultBottom int32) 
 	if w.state.Question != "" && l.Body.width() > w.unit(24) {
 		content := rect{l.Body.Left + w.unit(12), l.Body.Top, l.Body.Right - w.unit(12), l.Body.Bottom}
 		measure := rect{content.Left, 0, content.Right, 0}
-		height := text(dc, w.smallFont, blue, "需要补充", measure, 0x0010|0x0400) + w.unit(6) +
+		height := text(dc, w.smallFont, blue, w.label("popup.section.question"), measure, 0x0010|0x0400) + w.unit(6) +
 			text(dc, w.bodyFont, foreground, w.state.Question, measure, 0x0010|0x0400) + w.unit(24)
 		rounded(dc, rect{l.Body.Left, y, l.Body.Right, y + height}, w.unit(5), w.unit(1), questionTint, questionTint)
 		y += w.unit(12)
-		y = w.paragraph(dc, "需要补充", y, content, w.smallFont, blue) + w.unit(6)
+		y = w.paragraph(dc, w.label("popup.section.question"), y, content, w.smallFont, blue) + w.unit(6)
 		y = w.paragraph(dc, w.state.Question, y, content, w.bodyFont, foreground) + w.unit(32)
 	} else {
-		section("需要补充", w.state.Question, foreground)
+		section(w.label("popup.section.question"), w.state.Question, foreground)
 	}
-	rawLabel := "ASR 原文"
+	rawCode := "popup.section.raw"
 	if w.state.Turn > 1 {
-		rawLabel = "语音记录（含补充）"
+		rawCode = "popup.section.raw_with_replies"
 	}
-	section(rawLabel, w.state.RawText, muted)
+	section(w.label(rawCode), w.state.RawText, muted)
 	if w.state.Text != "" {
-		resultBottom = section("最终文本", w.state.Text, foreground) + w.scroll - l.Body.Top
+		resultBottom = section(w.label("popup.section.result"), w.state.Text, foreground) + w.scroll - l.Body.Top
 	}
-	section("搜索证据来源", sourceText(w.state), foreground)
+	section(w.label("popup.section.sources"), sourceTextForLocale(w.state, w.locale), foreground)
 	return max(0, y+w.scroll-l.Body.Bottom), resultBottom
 }
 
@@ -538,9 +556,9 @@ func (w *Window) click(action string) {
 				return
 			}
 			if err != nil {
-				w.copyNotice = "复制失败，请重试"
+				w.copyNotice = "popup.copy.failed"
 			} else {
-				w.copyNotice = "已复制"
+				w.copyNotice = "popup.copy.success"
 			}
 			w.invalidate()
 		}
@@ -569,7 +587,7 @@ func windowProc(hwnd uintptr, message uint32, wp, lp uintptr) uintptr {
 			return 0 // WM_CLOSE cancels instead of destroying.
 		case 0x0113: // WM_TIMER: no animation; only a changed countdown repaints.
 			if visible, _, _ := isVisible.Call(hwnd); visible != 0 {
-				label := footer(w.state, time.Now())
+				label := footerForLocale(w.state, time.Now(), w.locale)
 				if label != w.lastFooter {
 					w.lastFooter = label
 					r := w.layout().Footer

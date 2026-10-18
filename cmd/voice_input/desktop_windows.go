@@ -20,8 +20,10 @@ import (
 	"voice_input/internal/branding"
 	"voice_input/internal/buildmeta"
 	"voice_input/internal/hotkey"
+	"voice_input/internal/i18n"
 	"voice_input/internal/llm"
 	"voice_input/internal/netapi"
+	"voice_input/internal/popup"
 	"voice_input/internal/search"
 	"voice_input/internal/settings"
 	"voice_input/internal/wininput"
@@ -33,28 +35,64 @@ type Desktop struct {
 	app          *application.App
 	store        *settings.Store
 	vault        settings.Vault
-	startupError atomic.Value
+	startupError atomic.Pointer[i18n.Message]
+	testMarker   atomic.Pointer[i18n.Message]
+	locale       atomic.Value // i18n.Locale, applied only on the UI thread.
 	testMu       sync.Mutex
 	tray         *application.SystemTray
+	traySettings *application.MenuItem
+	trayCancel   *application.MenuItem
+	trayQuit     *application.MenuItem
+	popup        *popup.Window
 	popupAnchor  uintptr // UI-thread-only monitor anchor, never an input target.
 }
 type SettingsView struct {
-	Config            settings.Config    `json:"config"`
-	Keys              map[string]bool    `json:"keys"`
-	Version           string             `json:"version"`
-	PromptDefaults    llm.PromptDefaults `json:"prompt_defaults"`
-	CredentialMessage string             `json:"credential_message"`
+	Config                 settings.Config                    `json:"config"`
+	Keys                   map[string]bool                    `json:"keys"`
+	Version                string                             `json:"version"`
+	Locale                 i18n.Locale                        `json:"locale"`
+	SystemLocale           i18n.Locale                        `json:"system_locale"`
+	PromptDefaults         llm.PromptDefaults                 `json:"prompt_defaults"`
+	PromptDefaultsByLocale map[i18n.Locale]llm.PromptDefaults `json:"prompt_defaults_by_locale"`
+	CredentialMessage      string                             `json:"credential_message"`
+	CredentialMessageI18n  *i18n.Message                      `json:"credential_message_i18n,omitempty"`
+}
+type Feedback struct {
+	Message     string        `json:"message"`
+	MessageI18n *i18n.Message `json:"message_i18n,omitempty"`
 }
 type ActionResult struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
+	OK          bool          `json:"ok"`
+	Saved       bool          `json:"saved"`
+	Message     string        `json:"message"`
+	MessageI18n *i18n.Message `json:"message_i18n,omitempty"`
 }
 type DeviceResult struct {
-	Devices []audio.Device `json:"devices"`
-	Message string         `json:"message"`
+	Devices     []audio.Device `json:"devices"`
+	Message     string         `json:"message"`
+	MessageI18n *i18n.Message  `json:"message_i18n,omitempty"`
 }
 
-func (d *Desktop) Snapshot() core.State        { return d.controller.Snapshot() }
+func (d *Desktop) appliedLocale() i18n.Locale {
+	if locale := d.locale.Load(); locale != nil {
+		return locale.(i18n.Locale)
+	}
+	return i18n.Resolve(d.store.Get().UILanguage)
+}
+func (d *Desktop) feedback(message *i18n.Message) Feedback {
+	if message == nil {
+		return Feedback{}
+	}
+	return Feedback{Message: message.Text(d.appliedLocale()), MessageI18n: message}
+}
+func (d *Desktop) action(ok, saved bool, message i18n.Message) ActionResult {
+	feedback := d.feedback(&message)
+	return ActionResult{OK: ok, Saved: saved, Message: feedback.Message, MessageI18n: feedback.MessageI18n}
+}
+func (d *Desktop) setStartupError(message i18n.Message) { d.startupError.Store(&message) }
+func (d *Desktop) Snapshot() core.State {
+	return core.Present(d.controller.Snapshot(), d.appliedLocale())
+}
 func (d *Desktop) ClosePopup()                 { d.controller.Close() }
 func (d *Desktop) KeepPopupOpen(taskID string) { d.controller.KeepOpen(taskID) }
 func (d *Desktop) ReplyToClarification(taskID string, turn uint64, stop bool) {
@@ -66,7 +104,7 @@ func (d *Desktop) ShowSettings() {
 		// Create it only when settings are requested or startup needs attention.
 		if d.settings == nil {
 			d.settings = d.app.Window.NewWithOptions(application.WebviewWindowOptions{
-				Name: "settings", Title: branding.Name + " · 设置", URL: "/?view=settings", Width: 760, Height: 800,
+				Name: "settings", Title: branding.Name, URL: "/?view=settings", Width: 760, Height: 800,
 				Hidden: true, MinWidth: 520, MinHeight: 500,
 			})
 			d.settings.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
@@ -86,86 +124,136 @@ func (d *Desktop) CloseSettings() {
 		}
 	})
 }
-func (d *Desktop) StartupError() string {
-	if v := d.startupError.Load(); v != nil {
-		return v.(string)
-	}
-	return ""
-}
+func (d *Desktop) StartupError() Feedback { return d.feedback(d.startupError.Load()) }
 func (d *Desktop) GetSettings() SettingsView {
 	keys := map[string]bool{}
-	warning := ""
+	var warning *i18n.Message
 	for _, kind := range []string{"asr", "llm", "exa"} {
 		key, err := d.vault.Get(kind)
 		keys[kind] = err == nil && key != ""
 		if err != nil && !errors.Is(err, settings.ErrNoKey) {
-			warning = "Windows 安全凭据不可用；检查用户会话与 Credential Manager"
+			message := i18n.M("popup.feedback.credentials_unavailable")
+			warning = &message
 		}
 	}
-	return SettingsView{Config: d.store.Get(), Keys: keys, Version: buildmeta.Version, PromptDefaults: llm.DefaultPrompts(), CredentialMessage: warning}
+	locale := d.appliedLocale()
+	feedback := d.feedback(warning)
+	return SettingsView{
+		Config: d.store.Get(), Keys: keys, Version: buildmeta.Version,
+		Locale: locale, SystemLocale: i18n.SystemLocale(),
+		PromptDefaults: llm.DefaultPromptsForLocale(locale),
+		PromptDefaultsByLocale: map[i18n.Locale]llm.PromptDefaults{
+			i18n.EN: llm.DefaultPromptsForLocale(i18n.EN), i18n.ZhCN: llm.DefaultPromptsForLocale(i18n.ZhCN),
+		},
+		CredentialMessage: feedback.Message, CredentialMessageI18n: feedback.MessageI18n,
+	}
 }
 func (d *Desktop) SaveSettings(cfg settings.Config) ActionResult {
 	if !d.testMu.TryLock() {
-		return ActionResult{Message: "连接测试或任务正在初始化，请稍候"}
+		return d.action(false, false, i18n.M("popup.feedback.initializing"))
 	}
 	defer d.testMu.Unlock()
 	if err := cfg.Validate(); err != nil {
-		return ActionResult{Message: err.Error()}
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.settings_invalid"))
 	}
 	var result ActionResult
 	// Wails shortcut operations are main-thread-affine. Do not hold controller
 	// state locks while synchronously invoking native UI work.
 	application.InvokeSync(func() {
 		if d.controller.Busy() {
-			result.Message = "请先停止录音或取消当前任务，再保存设置"
+			result = d.action(false, false, i18n.M("popup.feedback.stop_before_save"))
 			return
 		}
+		previous := d.store.Get()
 		saved, err := hotkey.Replace(d.app.GlobalShortcut, []string{cfg.Hotkey, cfg.AIHotkey}, d.hotkeyFired, func() error { return d.store.Save(cfg) })
-		if saved {
-			d.controller.Presentation(cfg.Mode, cfg.Hotkey, cfg.AIHotkey)
-			if d.tray != nil {
-				d.tray.SetTooltip(shortcutTooltip(cfg))
-			}
-		}
-		if err != nil {
-			d.startupError.Store(err.Error())
-			result.Message = err.Error()
-			return
-		}
-		d.startupError.Store("")
-		result = ActionResult{OK: true, Message: "已保存"}
+		result = d.completeSettingsSave(saved, err, func() {
+			d.applyPresentation(previous, d.store.Get())
+		})
 	})
 	return result
 }
+
+func (d *Desktop) completeSettingsSave(saved bool, err error, apply func()) ActionResult {
+	if saved {
+		apply()
+	}
+	if err != nil {
+		message := i18n.FromError(err, "popup.feedback.settings_save_failed")
+		d.setStartupError(message)
+		return d.action(false, saved, message)
+	}
+	d.startupError.Store(nil)
+	return d.action(true, saved, i18n.M("popup.feedback.saved"))
+}
+
+// applyPresentation runs only on the UI thread after persistence succeeds,
+// including a saved-with-shortcut-warning result. A language-only change does
+// not publish a task revision, reset its timers, or replay its result follow.
+func (d *Desktop) applyPresentation(previous, cfg settings.Config) {
+	d.locale.Store(i18n.Resolve(cfg.UILanguage))
+	if previous.Mode != cfg.Mode || previous.Hotkey != cfg.Hotkey || previous.AIHotkey != cfg.AIHotkey {
+		d.controller.Presentation(cfg.Mode, cfg.Hotkey, cfg.AIHotkey)
+	}
+	locale := d.appliedLocale()
+	if d.tray != nil {
+		d.tray.SetTooltip(shortcutTooltipForLocale(cfg, locale))
+		d.traySettings.SetLabel(i18n.M("popup.tray.settings").Text(locale))
+		d.trayCancel.SetLabel(i18n.M("popup.tray.cancel").Text(locale))
+		d.trayQuit.SetLabel(i18n.M("popup.tray.quit").Text(locale))
+	}
+	if d.popup != nil {
+		d.popup.SetLocale(locale)
+	}
+	d.app.Event.Emit("presentation:changed", d.GetPresentation())
+}
 func (d *Desktop) SaveKey(kind, key string) ActionResult {
 	if err := d.vault.Set(kind, key); err != nil {
-		return ActionResult{Message: err.Error()}
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.key_save_failed"))
 	}
-	return ActionResult{OK: true, Message: "已保存"}
+	return d.action(true, true, i18n.M("popup.feedback.saved"))
 }
 func (d *Desktop) DeleteKey(kind string) ActionResult {
 	if err := d.vault.Delete(kind); err != nil {
-		return ActionResult{Message: err.Error()}
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.key_delete_failed"))
 	}
-	return ActionResult{OK: true, Message: "已删除"}
+	return d.action(true, true, i18n.M("popup.feedback.deleted"))
+}
+func presentDevices(devices []audio.Device, locale i18n.Locale) []audio.Device {
+	result := append([]audio.Device{}, devices...)
+	for i := range result {
+		if result[i].NameI18n != nil {
+			result[i].Name = result[i].NameI18n.Text(locale)
+		}
+	}
+	return result
+}
+func (d *Desktop) deviceResult(devices []audio.Device, message *i18n.Message) DeviceResult {
+	feedback := d.feedback(message)
+	return DeviceResult{Devices: presentDevices(devices, d.appliedLocale()), Message: feedback.Message, MessageI18n: feedback.MessageI18n}
 }
 func (d *Desktop) ListDevices(ctx context.Context) DeviceResult {
-	result := make(chan DeviceResult, 1)
+	type enumeration struct {
+		devices []audio.Device
+		err     error
+	}
+	result := make(chan enumeration, 1)
 	go func() {
 		devices, err := audio.Devices()
-		message := ""
-		if err != nil {
-			message = "未找到可用麦克风；检查 Windows 麦克风隐私权限与设备"
-		}
-		result <- DeviceResult{Devices: devices, Message: message}
+		result <- enumeration{devices, err}
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	select {
 	case devices := <-result:
-		return devices
+		var message *i18n.Message
+		if devices.err != nil {
+			warning := i18n.FromError(devices.err, "popup.feedback.devices_unavailable")
+			message = &warning
+		}
+		return d.deviceResult(devices.devices, message)
 	case <-ctx.Done():
-		return DeviceResult{Devices: []audio.Device{}, Message: "设备枚举超时或已取消；请检查设备驱动后重试"}
+		message := i18n.M("popup.feedback.devices_timeout")
+		return d.deviceResult(nil, &message)
 	}
 }
 func (d *Desktop) CopyResult(taskID string) error {
@@ -180,29 +268,29 @@ func (d *Desktop) CopyResult(taskID string) error {
 }
 func (d *Desktop) TestConnection(ctx context.Context, kind string) ActionResult {
 	if !d.testMu.TryLock() {
-		return ActionResult{Message: "已有连接测试或初始化正在运行，请稍候"}
+		return d.action(false, false, i18n.M("popup.feedback.test_busy"))
 	}
 	defer d.testMu.Unlock()
+	marker := i18n.M("popup.feedback.test_running")
+	d.testMarker.Store(&marker)
 	defer func() {
-		message := "连接测试正在运行；结束后再开始录音"
-		if d.StartupError() == message {
-			d.startupError.CompareAndSwap(message, "")
-		}
+		d.testMarker.CompareAndSwap(&marker, nil)
+		d.startupError.CompareAndSwap(&marker, nil)
 	}()
 	if d.controller.Busy() {
-		return ActionResult{Message: "已有任务正在运行，请先结束或取消"}
+		return d.action(false, false, i18n.M("popup.feedback.task_busy"))
 	}
 	if _, err := settings.KeyName(kind); err != nil {
-		return ActionResult{Message: err.Error()}
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.service_invalid"))
 	}
 	cfg := d.store.Get()
 	key, err := d.vault.Get(kind)
 	if err != nil {
-		return ActionResult{Message: "安全凭据未配置或不可用；请检查对应服务的密钥"}
+		return d.action(false, false, i18n.M("popup.feedback.key_unavailable"))
 	}
 	client, err := netapi.Client()
 	if err != nil {
-		return ActionResult{Message: "代理配置无效；检查 Windows 环境变量 PROXY_URL"}
+		return d.action(false, false, i18n.M("popup.feedback.proxy_invalid"))
 	}
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -216,39 +304,38 @@ func (d *Desktop) TestConnection(ctx context.Context, kind string) ActionResult 
 		}
 	case "llm":
 		cfg.LLM.DictationPrompt, cfg.LLM.DialoguePrompt, cfg.LLM.MaxToolRounds = "", "", 0
-		_, err = (llm.Compatible{Client: client, Config: cfg.LLM, Key: key}).Complete(ctx, llm.Request{Intent: core.Dictation, TaskID: "connection-test", ASRText: "测试连接，请只整理这句话。", NowLocal: time.Now()})
+		_, err = (llm.Compatible{Client: client, Config: cfg.LLM, Key: key, Locale: i18n.Resolve(cfg.UILanguage)}).Complete(ctx, llm.Request{Intent: core.Dictation, TaskID: "connection-test", ASRText: "测试连接，请只整理这句话。", NowLocal: time.Now()})
 	case "exa":
 		_, err = (search.Exa{Client: client, Key: key, Config: cfg.Exa}).Search(ctx, "Exa search API official documentation")
-	default:
-		err = errors.New("unknown service")
 	}
-	result := ActionResult{OK: err == nil}
 	if err != nil {
-		result.Message = netapi.SafeMessage(err, "连接测试失败；检查地址、模型、密钥与代理")
-	} else {
-		result.Message = "连接成功"
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.test_failed"))
 	}
-	return result
+	return d.action(true, false, i18n.M("popup.feedback.connected"))
 }
-func startupFatal(message string) {
-	title, _ := windows.UTF16PtrFromString(branding.Name + " · 启动错误")
-	text, _ := windows.UTF16PtrFromString(message)
+func startupFatal(message i18n.Message) {
+	title, _ := windows.UTF16PtrFromString(branding.Name)
+	text, _ := windows.UTF16PtrFromString(message.Text(i18n.SystemLocale()))
 	_, _, _ = windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW").Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x10)
 }
 
 type Presentation struct {
-	Mode     string `json:"mode"`
-	Hotkey   string `json:"hotkey"`
-	AIHotkey string `json:"ai_hotkey"`
+	Mode     string      `json:"mode"`
+	Hotkey   string      `json:"hotkey"`
+	AIHotkey string      `json:"ai_hotkey"`
+	Locale   i18n.Locale `json:"locale"`
 }
 
 func (d *Desktop) GetPresentation() Presentation {
 	cfg := d.store.Get()
-	return Presentation{Mode: cfg.Mode, Hotkey: cfg.Hotkey, AIHotkey: cfg.AIHotkey}
+	return Presentation{Mode: cfg.Mode, Hotkey: cfg.Hotkey, AIHotkey: cfg.AIHotkey, Locale: d.appliedLocale()}
 }
 
 func shortcutTooltip(cfg settings.Config) string {
-	return branding.Name + " · 润色 " + cfg.Hotkey + " / AI " + cfg.AIHotkey
+	return shortcutTooltipForLocale(cfg, i18n.Resolve(cfg.UILanguage))
+}
+func shortcutTooltipForLocale(cfg settings.Config, locale i18n.Locale) string {
+	return i18n.M("popup.tray.tooltip", "name", branding.Name, "hotkey", cfg.Hotkey, "ai_hotkey", cfg.AIHotkey).Text(locale)
 }
 
 func (d *Desktop) shortcutIntent(key hotkey.Combination) (core.Intent, bool) {
@@ -268,7 +355,15 @@ func (d *Desktop) hotkeyFired(key hotkey.Combination) {
 // Native-only callback; not exposed as a Wails service method.
 func (d *Desktop) toggle(intent core.Intent) {
 	if !d.testMu.TryLock() {
-		d.startupError.Store("连接测试正在运行；结束后再开始录音")
+		if marker := d.testMarker.Load(); marker != nil {
+			d.startupError.Store(marker)
+			// A test may have finished between the failed TryLock and Store.
+			if d.testMarker.Load() != marker {
+				d.startupError.CompareAndSwap(marker, nil)
+			}
+		} else {
+			d.setStartupError(i18n.M("popup.feedback.initializing"))
+		}
 		return
 	}
 	defer d.testMu.Unlock()

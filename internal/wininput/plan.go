@@ -2,8 +2,9 @@ package wininput
 
 import (
 	"context"
-	"errors"
 	"strings"
+
+	"voice_input/internal/i18n"
 )
 
 // INPUT is 40 bytes on Windows x64, including the largest union member.
@@ -48,17 +49,17 @@ func (p inputPlan) commit(ctx context.Context, clipboard func(string) error, sen
 		return err
 	}
 	if modifiersHeld() {
-		return errors.New("修饰键仍按下；请释放后手动复制结果")
+		return i18n.Error("input.modifiers")
 	}
 	if p.clipboard != "" {
 		if err := clipboard(p.clipboard); err != nil {
-			return errors.New("多行文本写入剪贴板失败；未粘贴，请手动复制")
+			return i18n.Error("input.clipboard")
 		}
 		if err := ctx.Err(); err != nil {
-			return errors.New("已替换剪贴板，但任务已取消或超时；未粘贴")
+			return i18n.Error("input.clipboard_cancelled")
 		}
 		if modifiersHeld() {
-			return errors.New("已替换剪贴板，但修饰键仍按下；未粘贴，请手动复制")
+			return i18n.Error("input.clipboard_modifiers")
 		}
 	}
 	sent := send(p.inputs)
@@ -73,7 +74,7 @@ func (p inputPlan) commit(ctx context.Context, clipboard func(string) error, sen
 			release = append(release, keyboardInput{Type: 1, VK: 0x11, Flags: 2})
 			send(release)
 		}
-		return errors.New("输入被系统拦截或仅部分提交；请检查目标后手动复制，勿盲目重试")
+		return i18n.Error("input.partial")
 	}
 	return nil
 }

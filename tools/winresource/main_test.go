@@ -100,7 +100,7 @@ func TestResourceVersions(t *testing.T) {
 				case winres.RT_MANIFEST:
 					manifests++
 					manifest, err := winres.AppManifestFromXML(data)
-					if err != nil || manifest.Identity.Version != release.Windows {
+					if err != nil || manifest.Identity.Name != "voice_input" || manifest.Identity.Version != release.Windows {
 						t.Fatal("wrong manifest version", manifest, err)
 					}
 				}

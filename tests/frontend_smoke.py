@@ -31,7 +31,7 @@ prompt_examples = {
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     errors = []
-    page = browser.new_page(viewport={"width": 760, "height": 800})
+    page = browser.new_page(viewport={"width": 760, "height": 800}, locale="zh-CN")
     page.on("pageerror", lambda error: errors.append(str(error)))
 
     def local_only(route):
@@ -102,8 +102,8 @@ with sync_playwright() as p:
     page.goto(base + "/?view=settings")
     page.wait_for_load_state("networkidle")
     shared_icon()
-    assert page.title() == "真实语义输入"
-    assert page.locator("h1").inner_text() == "真实语义输入"
+    assert page.title() == "voice input"
+    assert page.locator("h1").inner_text() == "voice input"
     assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["输入", "模型服务", "提示词", "联网与预算"]
     assert page.locator("#mode").input_value() == "live"
     assert page.locator("#mode option").count() == 2
@@ -292,12 +292,44 @@ with sync_playwright() as p:
         capture_categories(f"{width}x{height}-20px")
     large_text.evaluate("node => node.remove()")
 
+    # English chrome uses the same nodes, navigation, form scroll and command bar.
+    page.locator("#ui-language").evaluate("node => { node.value='en'; node.dispatchEvent(new Event('change',{bubbles:true})); }")
+    assert page.locator("html").get_attribute("lang") == "en"
+    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["Input", "Model services", "Prompts", "Search & budgets"]
+    assert page.locator("#bridge-error").inner_text() == "Read-only preview"
+    assert page.locator("#save").inner_text() == "Save settings"
+    assert page.locator("#settings-close").inner_text() == "Close settings"
+    assert page.locator("#profile-custom").input_value() == "保留的草稿 😀"
+    tab("models")
+    assert page.locator("#key-llm").get_attribute("placeholder") == "Enter a new key"
+    assert page.locator("#test-llm").get_attribute("aria-label") == "Test LLM connection"
+    page.locator("#asr-provider").select_option("mimo")
+    assert page.locator("#asr-language").get_attribute("title") == "Leave blank, or enter auto, zh or en"
+    page.locator("#asr-language").fill("ja")
+    assert page.locator("#asr-language").evaluate("node => node.validationMessage") == "Leave blank, or enter auto, zh or en"
+    page.locator("#asr-language").fill("en")
+    page.locator("#asr-provider").select_option("openai_compatible")
+    assert page.locator("#asr-model").get_attribute("placeholder") == "Transcription model supported by your service"
+    for large in (False, True):
+        large_text = page.add_style_tag(content="body *{font-size:20px!important}") if large else None
+        for width, height in ((760, 800), (520, 500), (360, 800)):
+            page.set_viewport_size({"width": width, "height": height})
+            capture_categories(f"en-{width}x{height}-{'20px' if large else '14px'}")
+            for selector in (".settings-tabs button", ".save-actions button", ".prompt-tabs button", ".credential-actions button"):
+                assert page.locator(selector + ":visible").evaluate_all("nodes => nodes.every(node => node.scrollWidth<=node.clientWidth)"), selector
+        if large_text:
+            large_text.evaluate("node => node.remove()")
+    # Auto resolves against the system (Chinese here), not the current English preview.
+    page.locator("#ui-language").evaluate("node => { node.value='auto'; node.dispatchEvent(new Event('change',{bubbles:true})); }")
+    assert page.locator("html").get_attribute("lang") == "zh-CN"
+    assert page.locator("#bridge-error").inner_text() == "只读预览"
+
     page.set_viewport_size({"width": 400, "height": 560})
     page.goto(base)
     page.wait_for_load_state("networkidle")
     shared_icon()
-    assert page.title() == "真实语义输入"
-    assert page.locator(".brand strong").inner_text() == "真实语义输入"
+    assert page.title() == "voice input"
+    assert page.locator(".brand strong").inner_text() == "voice input"
     assert page.locator("#stage").inner_text() == "准备就绪"
     assert page.locator("#copy").is_disabled()
     assert page.locator("#level").is_hidden()
@@ -326,6 +358,17 @@ with sync_playwright() as p:
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert page.evaluate("document.documentElement.scrollHeight <= innerHeight")
     page.screenshot(path=str(screenshots / "popup-idle.png"))
+    page.add_init_script("Object.defineProperty(navigator,'language',{get:()=> 'en-US'})")
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    assert page.title() == "voice input"
+    assert page.locator("html").get_attribute("lang") == "en"
+    assert page.locator("#stage").inner_text() == "Ready"
+    assert page.locator("#bridge-error").inner_text() == "Read-only preview"
+    assert page.locator("#settings").get_attribute("aria-label") == "Open settings"
+    assert page.locator("#countdown").inner_text() == "Polish Ctrl+Alt+R / AI Ctrl+Alt+A"
+    page.locator("#settings").click()
+    assert page.locator("#bridge-error").inner_text() == "Read-only preview"
     assert not errors, errors
     browser.close()
-print("PASS: orientation-aware tabs and 640/641 draft/focus retention; per-category/subtab real-viewport screenshots at default/minimum/narrow and 20px; Unicode limits, validation and read-only guards; compact Idle hides empty content/actions")
+print("PASS: bilingual chrome and preview guards; system-resolved auto; 360/520/760 English and Chinese layouts at 14px/20px; orientation-aware tabs, 640/641 draft/focus retention, Unicode limits and validation; compact Idle")

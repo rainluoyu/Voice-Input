@@ -13,6 +13,7 @@
 | `internal/audio`、`internal/asr` | WASAPI、PCM/WAV、ASR 协议 |
 | `internal/llm`、`internal/search` | 提示词、严格输出、受限 Exa 工具循环 |
 | `internal/settings` | 配置校验、迁移、原子保存、Credential Manager |
+| `internal/i18n` | Go/TS 共用词典、应用消息身份、系统语言解析 |
 | `internal/popup`、`internal/wininput` | 非激活原生浮窗、Unicode 输入和多行粘贴 |
 | `internal/branding`、`tools/winresource` | 同源图标、Windows 资源及普通权限 manifest |
 | `frontend`、`tests` | 设置/预览、浏览器 fixtures 和离线输入靶页 |
@@ -74,6 +75,8 @@ Windows 二进制在这里仅编译，不执行。离线工作时需预先具备
 
 脚本在临时 uv 项目中安装固定 Playwright 及 Chromium headless shell，构建前端并启动本地 Vite 预览。覆盖 smoke、Wails 桥接契约和设置异步状态；生成临时日志/截图。需要 `uv`、Node.js 和浏览器运行库，不向系统 Python 安装包。离线环境应复用已准备好的 uv/浏览器缓存，不重复安装。
 
+Python 仅用于开发辅助：`tests/frontend_smoke.py`、`tests/frontend_bridge.py`、`tests/frontend_settings.py` 做浏览器回归，`tests/docs_screenshots.py` 生成文档预览，`tests/release_workflow.py` 用 PyYAML 和本地替身校验发布流程。应用主体为 Go + TypeScript；运行 `voice_input.exe` 不需要 Python、uv 或 Playwright，便携包不携带 Python 运行时。
+
 预览页面本身只读，不能录音、保存设置、读取凭据或发起真实服务请求；测试使用本地拦截的 Wails fixtures，不是 Windows 集成验收。停止临时服务时只结束脚本保存的 PID。
 
 ## 脚本入口与网络
@@ -99,7 +102,7 @@ go run ./tools/package -exe bin/voice_input.exe -version "$version"
 
 `version` 必须与构建时一致。也可以用 `./scripts/package.sh 0.2.1` 构建指定版本；省略参数时使用共享默认版本。版本、资源与文件名不得分别修改。
 
-打包器回读实际 x64 PE、Go 目标、版本资源及普通权限 manifest，只收录明确白名单：程序、项目 LICENSE、双语 README、公开文档、三张审核后的界面示例、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
+打包器回读实际 x64 PE、Go 目标、版本资源及普通权限 manifest，只收录明确白名单：程序、项目 LICENSE、双语 README、公开文档、中英各三张审核后的界面示例、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
 
 输出 `voice_input-<version>-windows-amd64.zip` 及对应 `.zip.sha256`；`BUILDINFO.json` 记录回验后的产品版本、EXE 摘要、平台、工具链及未签名/桌面待验收状态。`-trimpath` 保留以避免写入个人构建路径；Go 在此模式不记录链接参数，因此版本注入通过统一构建命令和宿主注入测试保证，打包器不声称能直接读取运行期 Go 变量。
 
@@ -109,9 +112,9 @@ go run ./tools/package -exe bin/voice_input.exe -version "$version"
 
 ## 文档截图
 
-`tests/docs_screenshots.py` 使用实际前端与拦截的 Wails 响应，生成输入设置、提示词、澄清/结果三张图。先在本机回环启动 Vite 预览，再通过已准备 Playwright 的隔离 uv 项目运行该脚本；`UI_TEST_PORT` 指定预览端口，`--out` 可将试拍图留在仓库外。不会调用麦克风、Windows 或真实服务。
+`tests/docs_screenshots.py` 使用实际前端与拦截的 Wails 响应，分别生成简中和英文的输入设置、提示词、澄清/结果预览，每种语言三张。背景、任务和自定义提示词均为对应语言的虚构示例。先在本机回环启动 Vite 预览，再通过已准备 Playwright 的隔离 uv 项目运行该脚本；`UI_TEST_PORT` 指定预览端口，`--out` 可将试拍图留在仓库外。不会调用麦克风、Windows 或真实服务。
 
-只发布审核后的三张图；必须注明浏览器预览与示例数据，不能冒充 Windows 原生任务浮窗实拍。图片变更后重新核对隐私、中文字形和 README/ZIP 链接。
+只发布 `docs/images/zh-CN/` 和 `docs/images/en/` 中各三张审核后的图，README 分别引用对应语言；必须注明浏览器预览与示例数据，不能冒充 Windows 原生任务浮窗实拍。图片变更后重新核对隐私、中英文字形、英文残留文案和 README/ZIP 链接。
 
 ## GitHub 自动发布
 

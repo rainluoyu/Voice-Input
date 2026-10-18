@@ -3,6 +3,7 @@ package llm
 import (
 	"strings"
 
+	"voice_input/internal/i18n"
 	"voice_input/internal/settings"
 	"voice_input/internal/task"
 )
@@ -14,6 +15,13 @@ type PromptDefaults struct {
 }
 
 func DefaultPrompts() PromptDefaults {
+	return DefaultPromptsForLocale(i18n.ZhCN)
+}
+
+func DefaultPromptsForLocale(locale i18n.Locale) PromptDefaults {
+	if locale == i18n.EN {
+		return PromptDefaults{Dictation: defaultDictationBusinessEN, Dialogue: defaultDialogueBusinessEN}
+	}
 	return PromptDefaults{Dictation: defaultDictationBusiness, Dialogue: defaultDialogueBusiness}
 }
 
@@ -36,6 +44,14 @@ const defaultDialogueBusiness = `你的任务是理解用户通过语音提出�
 例如“帮我写一封请假邮件”应生成邮件正文；要求翻译时给出译文；要求编程时可输出多行代码。不因目标是 AI 应用就改成只整理提示词；只有用户明确要求撰写提示词时才输出提示词。
 结合相关背景和最新明确纠正，不捏造姓名、数字或私人信息。缺少影响完成请求的关键条件时返回 clarify，信息充分时完成请求，不做无必要追问。`
 
+const defaultDictationBusinessEN = `Turn dictated speech into natural, accurate, fluent written expression rather than making only minimal wording edits. Correct grammatical problems, contextually clear misuse of idioms, and inappropriate wording; restructure sentences, remove filler, meaningless repetition and redundancy, correct obvious typos, and add punctuation, necessary line breaks and paragraphs.
+Interpret idioms and wording in context: if the speaker clearly means saving half the time but uses an idiom meaning twice the effort for half the result, correct it to express half the effort for twice the result. If they mean investing much effort for little result, retain that negative assessment rather than mechanically reversing it.
+Faithfully preserve facts, people, proper names, numbers, times, negation, conditions, causality, responsible parties, positions, emotions and uncertainty; follow the latest explicit correction. Do not turn a possibility into a certainty, remove meaningful emphasis, or add facts, answers, commitments or background that the user did not state. When information is ambiguous, preserve its meaning without guessing.`
+
+const defaultDialogueBusinessEN = `Understand the user's spoken request, carry it out directly, and output the actual result they need, rather than merely polishing or repeating the request.
+For example, a request to write a leave-request email should produce the email body; a translation request should produce the translation; a programming request may produce multiline code. Do not switch to merely organizing a prompt because the target is an AI application; output a prompt only when the user explicitly requests one.
+Use relevant background and the latest explicit corrections without inventing names, numbers or private information. Return clarify if essential context needed to complete the request is missing; complete the request when sufficient information is available, without unnecessary follow-up questions.`
+
 const businessStart = "\n业务规则：\n"
 const protocolStart = "\n固定公共协议：\n"
 
@@ -43,12 +59,17 @@ const protocolStart = "\n固定公共协议：\n"
 const DictationPrompt = dictationPurpose + businessStart + defaultDictationBusiness + protocolStart + commonRules
 const SystemPrompt = dialoguePurpose + businessStart + defaultDialogueBusiness + protocolStart + commonRules
 
-func promptFor(intent task.Intent, cfg settings.LLM) string {
+func promptFor(intent task.Intent, cfg settings.LLM, locales ...i18n.Locale) string {
+	locale := i18n.ZhCN // Preserve the existing internal caller's Chinese default.
+	if len(locales) != 0 {
+		locale = locales[0]
+	}
+	defaults := DefaultPromptsForLocale(locale)
 	purpose, business := dialoguePurpose, cfg.DialoguePrompt
-	fallback := defaultDialogueBusiness
+	fallback := defaults.Dialogue
 	if intent == task.Dictation {
 		purpose, business = dictationPurpose, cfg.DictationPrompt
-		fallback = defaultDictationBusiness
+		fallback = defaults.Dictation
 	}
 	if strings.TrimSpace(business) == "" {
 		business = fallback

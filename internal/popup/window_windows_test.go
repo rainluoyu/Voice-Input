@@ -5,6 +5,7 @@ package popup
 import (
 	"errors"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"voice_input/internal/app"
+	"voice_input/internal/i18n"
 	"voice_input/internal/search"
 )
 
@@ -82,12 +84,12 @@ func TestCopyFeedbackCannotOverwriteNoticeOrNewTask(t *testing.T) {
 		return errors.New("clipboard busy")
 	}
 	w.click("copy")
-	if w.copyNotice != "复制失败，请重试" || w.state.Notice != "原始任务错误" {
+	if w.label(w.copyNotice) != "复制失败，请重试" || w.state.Notice != "原始任务错误" {
 		t.Fatal("failed copy replaced task Notice")
 	}
 	w.actions.Copy = func(string) error { return nil }
 	w.click("copy")
-	if w.copyNotice != "已复制" || w.state.Notice != "原始任务错误" {
+	if w.label(w.copyNotice) != "已复制" || w.state.Notice != "原始任务错误" {
 		t.Fatal("successful copy replaced task Notice")
 	}
 	for _, next := range []app.State{{TaskID: "next-task", Turn: 1}, {TaskID: "task", Turn: 2}} {
@@ -101,6 +103,38 @@ func TestCopyFeedbackCannotOverwriteNoticeOrNewTask(t *testing.T) {
 		if w.copyNotice != "" {
 			t.Fatal("stale feedback reached a new task or turn", next)
 		}
+	}
+}
+
+func TestSetLocaleOnlyRepaintsWithoutChangingTaskOrInteractionState(t *testing.T) {
+	w := New(Actions{})
+	message := i18n.M("popup.feedback.popup_failed")
+	w.state = app.State{TaskID: "task", Turn: 3, Revision: 20, Stage: app.Done, Visible: true,
+		HideAt: 123456, Pinned: true, Text: "业务 result", RawText: "中文原文", Question: "模型问题？",
+		Notice: message.Text(i18n.ZhCN), NoticeMessage: &message}
+	w.scroll, w.maxScroll, w.target = 43, 100, 123
+	w.pressed, w.pressedTask, w.pressedTurn, w.hover = "copy", "task", 3, "copy"
+	w.copyNotice = "popup.copy.success"
+	w.resultFollow.observe(w.state)
+	w.resultFollow.target(500, 100, 600)
+	before, follow := w.state, w.resultFollow
+	for _, locale := range []i18n.Locale{i18n.EN, i18n.ZhCN, i18n.EN} {
+		w.SetLocale(locale)
+		want := before
+		want.Notice = message.Text(locale)
+		if !reflect.DeepEqual(w.state, want) || w.resultFollow != follow || w.scroll != 43 || w.maxScroll != 100 ||
+			w.target != 123 || w.hwnd != 0 || w.pressed != "copy" || w.pressedTask != "task" || w.pressedTurn != 3 || w.hover != "copy" {
+			t.Fatal("locale change reset task, time, scroll, follow, press or native window")
+		}
+		if got := w.label(w.copyNotice); got != i18n.M("popup.copy.success").Text(locale) {
+			t.Fatal("copy feedback did not follow chrome locale", got)
+		}
+	}
+	w.state.Notice, w.state.NoticeMessage = "模型备注无需猜测翻译", nil
+	w.SetLocale(i18n.ZhCN)
+	w.SetLocale(i18n.EN)
+	if w.state.Notice != "模型备注无需猜测翻译" {
+		t.Fatal("model-authored notice was translated")
 	}
 }
 
@@ -220,6 +254,14 @@ func TestDesktopPopupNeverActivates(t *testing.T) {
 	if w.scroll != 0 {
 		t.Fatal("repeated terminal state stole manual scroll")
 	}
+	localeState, localeFollow, localeHWND := w.state, w.resultFollow, w.hwnd
+	for _, locale := range []i18n.Locale{i18n.EN, i18n.ZhCN} {
+		w.SetLocale(locale)
+		checkFocus("locale-only repaint")
+		if w.hwnd != localeHWND || w.scroll != 0 || w.resultFollow != localeFollow || !reflect.DeepEqual(w.state, localeState) {
+			t.Fatal("language switch recreated, refollowed or changed the task")
+		}
+	}
 	before := interactions
 	windowProc(w.hwnd, 0x0200, 0, 0)
 	if interactions != before+1 {
@@ -246,7 +288,7 @@ func TestDesktopPopupNeverActivates(t *testing.T) {
 	if copied != 1 {
 		t.Fatal("copy action failed")
 	}
-	if w.copyNotice != "已复制" || w.state.Notice != "浮窗不得激活" {
+	if w.label(w.copyNotice) != "已复制" || w.state.Notice != "浮窗不得激活" {
 		t.Fatal("copy feedback overwrote the task notice")
 	}
 	checkFocus("copy")

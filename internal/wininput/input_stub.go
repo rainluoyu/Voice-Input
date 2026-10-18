@@ -4,11 +4,12 @@ package wininput
 
 import (
 	"context"
-	"errors"
+
+	"voice_input/internal/i18n"
 )
 
 type Native struct{}
 
 func (Native) Prepare(context.Context, string) (func() error, error) {
-	return nil, errors.New("自动输入仅支持 Windows")
+	return nil, i18n.Error("input.platform")
 }

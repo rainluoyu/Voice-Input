@@ -11,6 +11,11 @@ screenshots = Path(os.environ.get("UI_SCREENSHOT_DIR", "/tmp/voice_input-redesig
 screenshots.mkdir(parents=True, exist_ok=True)
 startup_error = ""
 defaults = {"dictation": "默认润色😀<img src=x onerror=window.__pwned=true>", "dialogue": "默认对话📦"}
+defaults_by_locale = {"zh-CN": defaults, "en": {"dictation": "Default dictation 😀 <img src=x onerror=window.__pwned=true>", "dialogue": "Default dialogue 📦"}}
+settings_locale = "zh-CN"
+system_locale = "zh-CN"
+hold_test = False
+pending_test = []
 config = {
     "version": 1, "mode": "live", "hotkey": "Ctrl+Alt+R", "ai_hotkey": "Ctrl+Alt+A",
     "recording": {"device_id": "default", "max_seconds": 120},
@@ -29,7 +34,7 @@ requests = []
 errors = []
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    context = browser.new_context(viewport={"width": 760, "height": 800})
+    context = browser.new_context(viewport={"width": 760, "height": 800}, locale="zh-CN")
 
     def route_request(route):
         parsed = urlsplit(route.request.url)
@@ -52,8 +57,13 @@ with sync_playwright() as p:
         if method == "SaveKey":
             pending_key.append((route, copy.deepcopy(params)))
             return
+        if method == "TestConnection" and hold_test:
+            pending_test.append(route)
+            return
         if method == "StartupError":
             result = startup_error
+        elif method == "ListDevices":
+            result = {"devices": [{"id": "default", "name": "系统默认麦克风", "name_i18n": {"code": "popup.device.default"}}, {"id": "real-device", "name": "正在录音<img src=x onerror=window.__pwned=true>"}], "message": "已保存", "message_i18n": {"code": "popup.feedback.saved"}}
         elif method in ("TestConnection", "DeleteKey"):
             result = {"ok": True, "message": "fixture"}
         elif method == "CloseSettings":
@@ -73,22 +83,22 @@ with sync_playwright() as p:
             page.wait_for_timeout(20)
         raise AssertionError("no pending request")
 
-    def fulfill_read(ok=True, message=""):
+    def fulfill_read(ok=True, message="", identity=None):
         wait_pending(pending_read)
         route = pending_read.pop(0)
-        result = {"config": config, "prompt_defaults": defaults, "keys": {"asr": False, "llm": False, "exa": False}, "version": "1.4.2-rc.1", "credential_message": message} if ok else {"kind": "RuntimeError", "message": "fixture"}
+        result = {"config": config, "locale": settings_locale, "system_locale": system_locale, "prompt_defaults_by_locale": defaults_by_locale, "prompt_defaults": defaults_by_locale[settings_locale], "keys": {"asr": False, "llm": False, "exa": False}, "version": "1.4.2-rc.1", "credential_message": message, "credential_message_i18n": identity} if ok else {"kind": "RuntimeError", "message": "fixture"}
         route.fulfill(status=200 if ok else 500, content_type="application/json", body=json.dumps(result, ensure_ascii=False))
 
     def tab(name):
         page.locator("#tab-" + name).click()
 
-    def save_result(ok=True, http_error=False):
+    def save_result(ok=True, http_error=False, saved=False, identity=None):
         global config
         wait_pending(pending_save)
         route, submitted = pending_save.pop(0)
-        if ok and not http_error:
+        if (ok or saved) and not http_error:
             config = copy.deepcopy(submitted)
-        result = {"kind": "RuntimeError", "message": "fixture"} if http_error else {"ok": ok, "message": "已保存" if ok else "fixture rejected"}
+        result = {"kind": "RuntimeError", "message": "fixture"} if http_error else {"ok": ok, "saved": saved, "message": "已保存" if ok else "fixture rejected", "message_i18n": identity}
         route.fulfill(status=500 if http_error else 200, content_type="application/json", body=json.dumps(result))
         page.wait_for_function('!document.querySelector("#save").disabled')
         return submitted
@@ -228,6 +238,168 @@ with sync_playwright() as p:
     page.locator("#prompt-tab-dialogue").click()
     assert page.locator("#dialogue-prompt").input_value() == "真实自定义😀"
 
+    # Language is a local preview, resolved independently of the applied locale.
+    config["ui_language"] = "en"
+    config["llm"]["dictation_prompt"] = ""
+    config["llm"]["dialogue_prompt"] = defaults_by_locale["en"]["dialogue"]
+    settings_locale = "en"
+    system_locale = "zh-CN"
+    page.reload(wait_until="domcontentloaded")
+    fulfill_read(message="unsafe credential detail", identity={"code": "popup.feedback.credentials_unavailable"})
+    page.wait_for_function('!document.querySelector("#save").disabled')
+    assert page.title() == "voice input"
+    assert page.locator("html").get_attribute("lang") == "en"
+    assert page.locator("#ui-language").input_value() == "en"
+    read_count = sum(method == "GetSettings" for method, _ in requests)
+
+    def language(value):
+        page.locator("#ui-language").evaluate("(node, value) => { node.value=value; node.dispatchEvent(new Event('change',{bubbles:true})); }", value)
+
+    def translated(locale):
+        dictionary = {}
+        for name in ("messages", "popup", "settings"):
+            dictionary.update(json.loads((Path(__file__).resolve().parents[1] / "internal" / "i18n" / (name + ".json")).read_text())[locale])
+        for node in page.locator("[data-i18n]").all():
+            assert node.text_content() == dictionary[node.get_attribute("data-i18n")]
+        for attribute in ("aria-label", "title", "placeholder"):
+            for node in page.locator("[data-i18n-" + attribute + "]").all():
+                assert node.get_attribute(attribute) == dictionary[node.get_attribute("data-i18n-" + attribute)]
+        assert page.locator("html").get_attribute("lang") == locale
+        assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
+
+    translated("en")
+    assert page.locator("#bridge-error").inner_text() == "Windows credentials are unavailable; check your user session and Credential Manager"
+    assert "unsafe credential detail" not in page.locator("body").inner_text()
+    assert page.locator("#dictation-prompt").input_value() == defaults_by_locale["en"]["dictation"]
+    assert page.locator("#dialogue-prompt").get_attribute("data-prompt-source") == "custom"
+    language("auto")
+    translated("zh-CN")
+    assert page.locator("#dictation-prompt").input_value() == defaults["dictation"]
+    assert page.locator("#dialogue-prompt").input_value() == defaults_by_locale["en"]["dialogue"], "custom equal to another locale's default is still custom"
+    page.locator("#save").click()
+    submitted = save_result()
+    assert submitted["ui_language"] == "auto"
+    assert submitted["llm"]["dictation_prompt"] == ""
+    assert submitted["llm"]["dialogue_prompt"] == defaults_by_locale["en"]["dialogue"]
+    language("en")
+    tab("models")
+    page.locator("#key-llm").fill("pending-input-secret")
+    page.locator("#key-llm").focus()
+    page.locator("#key-llm").evaluate("node => { window.__retainedKey=node; node.setSelectionRange(2,6); }")
+    page.locator("#preferences").evaluate("node => node.scrollTop=200")
+    scroll = page.locator("#preferences").evaluate("node => node.scrollTop")
+    language("zh-CN")
+    assert page.locator("#key-llm").evaluate("node => node===window.__retainedKey && node===document.activeElement && node.selectionStart===2 && node.selectionEnd===6")
+    assert page.locator("#key-llm").input_value() == "pending-input-secret"
+    assert page.locator("#preferences").evaluate("node => node.scrollTop") == scroll
+    assert page.locator("#panel-models").is_visible()
+    page.locator("#key-llm").fill("")
+    assert page.locator("#test-llm").is_enabled(), "language alone must not dirty a service"
+    tab("prompts")
+    page.locator("#prompt-tab-dialogue").click()
+    page.locator("#dialogue-prompt").fill("输入法草稿 😀")
+    page.locator("#dialogue-prompt").evaluate("node => { window.__ime=node; node.focus(); node.setSelectionRange(1,3); node.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'输'})); }")
+    language("en")
+    assert page.locator("#dialogue-prompt").evaluate("node => node===window.__ime && node===document.activeElement && node.selectionStart===1 && node.selectionEnd===3")
+    assert page.locator("#dialogue-prompt").input_value() == "输入法草稿 😀"
+    page.locator("#dialogue-prompt").evaluate("node => node.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'输入'}))")
+    def accept_english_restore(dialog):
+        assert dialog.message == "Restore the default prompt? Your current edits will be replaced."
+        dialog.accept()
+
+    page.once("dialog", accept_english_restore)
+    page.locator("#reset-dialogue").click()
+    assert page.locator("#dialogue-prompt").get_attribute("data-prompt-source") == "default"
+    language("zh-CN")
+    assert page.locator("#dialogue-prompt").input_value() == defaults["dialogue"]
+    language("en")
+    tab("models")
+    page.locator("#llm-model").fill("snapshot-en")
+    page.locator("#save").click()
+    wait_pending(pending_save)
+    language("auto")
+    page.locator("#llm-model").fill("newer-zh-draft")
+    page.locator("#key-llm").fill("newer-unsaved-key")
+    submitted = save_result(False, saved=True, identity={"code": "popup.feedback.saved"})
+    assert submitted["ui_language"] == "en" and submitted["llm"]["model"] == "snapshot-en"
+    assert submitted["llm"]["dictation_prompt"] == "" and submitted["llm"]["dialogue_prompt"] == ""
+    assert page.locator("#ui-language").input_value() == "auto"
+    assert page.locator("html").get_attribute("lang") == "zh-CN"
+    assert page.locator("#save-message").inner_text() == "已保存"
+    assert page.locator("#llm-model").input_value() == "newer-zh-draft"
+    assert page.locator("#key-llm").input_value() == "newer-unsaved-key"
+    page.locator("#key-llm").fill("")
+    page.locator("#llm-model").fill("snapshot-en")
+    assert page.locator("#test-llm").is_enabled(), "saved=true/ok=false must advance the submitted service baseline"
+    language("en")
+    assert page.locator("#save-message").inner_text() == "Saved", "feedback retains message identity, not its old translation"
+
+    # Save/test/key requests may finish after another language and newer draft edits.
+    for http_error in (False, True):
+        page.locator("#llm-model").fill("failed-en-snapshot")
+        page.locator("#save").click()
+        wait_pending(pending_save)
+        language("zh-CN")
+        page.locator("#llm-model").fill("preserved-new-draft")
+        save_result(False, http_error=http_error)
+        assert page.locator("#llm-model").input_value() == "preserved-new-draft"
+        assert page.locator("#ui-language").input_value() == "zh-CN"
+        page.locator("#llm-model").fill("snapshot-en")
+        assert page.locator("#test-llm").is_enabled()
+        language("en")
+    hold_test = True
+    page.locator("#test-llm").click()
+    wait_pending(pending_test)
+    language("zh-CN")
+    assert page.locator("#test-llm").is_disabled()
+    assert page.locator("#key-message-llm").inner_text() == "测试中……"
+    page.locator("#llm-model").fill("edited-during-test")
+    pending_test.pop(0).fulfill(status=200, content_type="application/json", body=json.dumps({"ok": False, "message": "raw unsafe provider error", "message_i18n": {"code": "popup.feedback.test_failed"}}))
+    page.wait_for_function('!document.querySelector("#save-key-llm").disabled')
+    assert page.locator("#test-llm").is_disabled()
+    assert page.locator("#llm-model").input_value() == "edited-during-test"
+    assert "raw unsafe provider error" not in page.locator("body").inner_text()
+    language("en")
+    assert page.locator("#key-message-llm").inner_text() == "Connection test failed; check the address, model, key and proxy"
+    hold_test = False
+    page.locator("#llm-model").fill("snapshot-en")
+    page.locator("#key-llm").fill("failed-key")
+    page.locator("#save-key-llm").click()
+    wait_pending(pending_key)
+    assert page.locator("#key-llm").input_value() == ""
+    language("zh-CN")
+    page.locator("#key-llm").fill("new-secret-must-survive")
+    pending_key.pop(0)[0].fulfill(status=200, content_type="application/json", body=json.dumps({"ok": False, "message": "unsafe provider secret", "message_i18n": {"code": "not.registered"}}))
+    page.wait_for_function('!document.querySelector("#save-key-llm").disabled')
+    assert page.locator("#key-llm").input_value() == "new-secret-must-survive"
+    assert page.locator("#key-message-llm").inner_text() == "操作失败，请重试"
+    assert page.locator("#test-llm").is_disabled()
+    language("en")
+    assert page.locator("#key-message-llm").inner_text() == "Operation failed. Please try again."
+    assert "unsafe provider secret" not in page.locator("body").inner_text()
+    tab("input")
+    page.locator("#refresh-devices").click()
+    page.wait_for_function('document.querySelector("#device").options.length===2')
+    assert page.locator('#device option[value="default"]').inner_text() == "System default microphone"
+    assert page.locator('#device option[value="real-device"]').inner_text() == "正在录音<img src=x onerror=window.__pwned=true>"
+    page.locator("#device").evaluate("node => window.__deviceOption=node.options[0]")
+    language("zh-CN")
+    assert page.locator('#device option[value="default"]').inner_text() == "系统默认麦克风"
+    assert page.locator("#device").evaluate("node => node.options[0]===window.__deviceOption")
+    assert page.locator("#device-message").inner_text() == "已保存"
+    assert sum(method == "GetSettings" for method, _ in requests) == read_count
+    assert not page.evaluate("Boolean(window.__pwned)")
+
+    # Typed startup feedback is translated, while named arguments remain literal text.
+    startup_error = {"message": "do not expose this", "message_i18n": {"code": "popup.feedback.shortcut_failed", "args": {"shortcuts": "Ctrl+X<img src=x>"}}}
+    page.wait_for_function('document.querySelector("#startup-error").textContent.includes("Ctrl+X<img src=x>")')
+    language("en")
+    assert page.locator("#startup-error").inner_text() == "Could not register shortcuts: Ctrl+X<img src=x>"
+    assert page.locator("#startup-error img").count() == 0
+    translated("en")
+    config["ui_language"] = "zh-CN"
+    settings_locale = "zh-CN"
+
     # Real fixture errors belong to the form scroll, not the navigation or command bar.
     credential_error = "凭据存储不可用：" + "请检查本地凭据权限与服务设置。" * 12
     startup_error = "快捷键注册失败：" + "请检查占用此组合键的应用。" * 12
@@ -271,4 +443,4 @@ with sync_playwright() as p:
     assert sum(method == "SaveSettings" for method, _ in requests) == before
     assert not errors, errors
     browser.close()
-print("PASS: fail-closed loading; backend defaults/custom sentinels; independent restore/background; XSS; preserve config; submitted baseline and in-flight drafts; save failure retention; immediate key clearing and service-specific test guards; long fixture errors remain in the form scroll with reachable commands at all viewports and 20px")
+print("PASS: bilingual settings/feedback and system-resolved auto; explicit default/custom prompt sources; DOM/focus/selection/IME/scroll/key retention; pending save/test/key and failures preserve drafts; saved=true/ok=false snapshot baseline; dirty guards, typed/legacy messages, devices/XSS and existing viewport/validation regressions")

@@ -98,7 +98,7 @@ func popupLayout(s app.State, dpi int32, client rect) layout {
 	}
 	left, right, top := inner.Left+u(14), inner.Right-u(14), inner.Top
 	l.Close = box(right-u(28), top+u(12), u(28), u(30), l.Header)
-	l.Settings = box(l.Close.Left-u(52), top+u(12), u(44), u(30), l.Header)
+	l.Settings = box(l.Close.Left-u(96), top+u(12), u(88), u(30), l.Header)
 	l.Icon = box(left, top+u(14), u(28), u(28), l.Header)
 	l.Brand = box(left+u(40), top+u(10), l.Settings.Left-u(8)-left-u(40), u(22), l.Header)
 	l.Purpose = box(l.Brand.Left, top+u(32), l.Brand.width(), u(18), l.Header)

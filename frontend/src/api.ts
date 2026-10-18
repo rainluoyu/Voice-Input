@@ -1,10 +1,15 @@
 import { Call } from '@wailsio/runtime';
-export const APP_NAME = '真实语义输入';
+export const APP_NAME = 'voice input';
 export const preview = !location.protocol.startsWith('wails') && ['localhost','127.0.0.1'].includes(location.hostname);
 export const call = <T>(method: string, ...args: unknown[]): Promise<T> => Call.ByName(`main.Desktop.${method}`, ...args);
-export type ActionResult = {ok:boolean;message:string};
+export type Locale = 'en'|'zh-CN';
+export type UILanguage = 'auto'|Locale;
+export type Message = {code:string;args?:Record<string,string>};
+export type ActionResult = {ok:boolean;saved?:boolean;message:string;message_i18n?:Message};
+export type PromptDefaults = {dictation:string;dialogue:string};
+export type Presentation = {locale:Locale;mode:string;hotkey:string;ai_hotkey:string};
 export type Config = {
- version:number;mode:'asr_mock_llm'|'live';hotkey:string;ai_hotkey:string;
+ version:number;ui_language?:UILanguage;mode:'asr_mock_llm'|'live';hotkey:string;ai_hotkey:string;
  recording:{device_id:string;max_seconds:number};
  asr:{provider?:'openai_compatible'|'mimo'|'';endpoint:string;model:string;language:string;timeout_seconds:number};
  llm:{base_url:string;model:string;timeout_seconds:number;task_timeout_seconds:number;output_format:string;dictation_prompt:string;dialogue_prompt:string;max_tool_rounds:number};
@@ -12,5 +17,5 @@ export type Config = {
  profile:{custom_background:string};
  popup:{auto_hide_seconds:number;always_on_top:boolean};privacy:{save_history:boolean;log_text:boolean};
 };
-export type SettingsView = {config:Config;keys:Record<string,boolean>;version:string;prompt_defaults:{dictation:string;dialogue:string};credential_message?:string};
-export const defaultConfig = ():Config => ({version:1,mode:'live',hotkey:'Ctrl+Alt+R',ai_hotkey:'Ctrl+Alt+A',recording:{device_id:'default',max_seconds:120},asr:{provider:'openai_compatible',endpoint:'',model:'',language:'',timeout_seconds:45},llm:{base_url:'',model:'',timeout_seconds:45,task_timeout_seconds:90,output_format:'json_schema',dictation_prompt:'',dialogue_prompt:'',max_tool_rounds:2},exa:{enabled:false,search_type:'instant',max_calls:2,timeout_seconds:10},profile:{custom_background:''},popup:{auto_hide_seconds:30,always_on_top:true},privacy:{save_history:false,log_text:false}});
+export type SettingsView = {config:Config;keys:Record<string,boolean>;version:string;locale:Locale;system_locale:Locale;prompt_defaults:PromptDefaults;prompt_defaults_by_locale:Record<Locale,PromptDefaults>;credential_message?:string;credential_message_i18n?:Message};
+export const defaultConfig = ():Config => ({version:1,ui_language:'auto',mode:'live',hotkey:'Ctrl+Alt+R',ai_hotkey:'Ctrl+Alt+A',recording:{device_id:'default',max_seconds:120},asr:{provider:'openai_compatible',endpoint:'',model:'',language:'',timeout_seconds:45},llm:{base_url:'',model:'',timeout_seconds:45,task_timeout_seconds:90,output_format:'json_schema',dictation_prompt:'',dialogue_prompt:'',max_tool_rounds:2},exa:{enabled:false,search_type:'instant',max_calls:2,timeout_seconds:10},profile:{custom_background:''},popup:{auto_hide_seconds:30,always_on_top:true},privacy:{save_history:false,log_text:false}});

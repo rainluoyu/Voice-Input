@@ -1,8 +1,9 @@
 package settings
 
 import (
-	"errors"
 	"strings"
+
+	"voice_input/internal/i18n"
 )
 
 type Vault interface {
@@ -11,18 +12,18 @@ type Vault interface {
 	Delete(string) error
 }
 
-var ErrNoKey = errors.New("未配置服务密钥")
+var ErrNoKey = i18n.Error("settings.no_key")
 
 func KeyName(kind string) (string, error) {
 	switch kind {
 	case "asr", "llm", "exa":
 		return "voice_input/" + kind, nil
 	}
-	return "", errors.New("未知密钥类型")
+	return "", i18n.Error("settings.key_kind")
 }
 func ValidKey(key string) error {
 	if len(key) < 1 || len(key) > 2560 || strings.ContainsAny(key, "\r\n\x00") {
-		return errors.New("密钥为空、过长或包含控制字符")
+		return i18n.Error("settings.key_invalid")
 	}
 	return nil
 }

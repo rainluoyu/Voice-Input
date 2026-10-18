@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestDisplayName(t *testing.T) {
+	if Name != "voice input" {
+		t.Fatalf("display name must be exactly voice input, got %q", Name)
+	}
+}
+
 func TestIconPNG(t *testing.T) {
 	image, err := png.Decode(bytes.NewReader(PNG()))
 	if err != nil {

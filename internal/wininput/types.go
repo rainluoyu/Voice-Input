@@ -2,11 +2,12 @@ package wininput
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"voice_input/internal/i18n"
 )
 
 type Injector interface {
@@ -18,11 +19,11 @@ type Injector interface {
 func Normalize(text string) (string, error) {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 8000 {
-		return "", errors.New("结果为空、编码无效或超过 8000 字；请手动复制")
+		return "", i18n.Error("input.invalid")
 	}
 	for _, r := range text {
 		if (unicode.IsControl(r) && r != '\n') || r == 0x2028 || r == 0x2029 {
-			return "", errors.New("文本包含 Tab、孤立回车或其他控制字符，禁止自动输入；请手动复制")
+			return "", i18n.Error("input.controls")
 		}
 	}
 	return text, nil
@@ -36,7 +37,7 @@ func UnicodeUnits(text string) ([]uint16, error) {
 		return nil, err
 	}
 	if strings.Contains(text, "\n") {
-		return nil, errors.New("多行文本需要使用粘贴路径")
+		return nil, i18n.Error("input.multiline")
 	}
 	return utf16.Encode([]rune(text)), nil
 }

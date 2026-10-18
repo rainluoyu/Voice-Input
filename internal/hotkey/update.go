@@ -1,8 +1,7 @@
 package hotkey
 
 import (
-	"errors"
-	"fmt"
+	"voice_input/internal/i18n"
 )
 
 type Registry interface {
@@ -22,7 +21,7 @@ func Replace(reg Registry, desired []string, fired func(Combination), save func(
 			return false, err
 		}
 		if wanted[key] {
-			return false, errors.New("两种用途的快捷键不能相同")
+			return false, i18n.Error("hotkey.same")
 		}
 		wanted[key] = true
 	}
@@ -30,7 +29,7 @@ func Replace(reg Registry, desired []string, fired func(Combination), save func(
 	for _, raw := range reg.GetAll() {
 		key, err := Parse(raw)
 		if err != nil {
-			return false, errors.New("已有快捷键无法识别；请重启程序")
+			return false, i18n.Error("hotkey.old_invalid")
 		}
 		old[key] = true
 	}
@@ -43,7 +42,7 @@ func Replace(reg Registry, desired []string, fired func(Combination), save func(
 			}
 		}
 		if failed {
-			return false, errors.New("快捷键更新失败且回滚失败；旧配置保留，请重启程序")
+			return false, i18n.Error("hotkey.rollback")
 		}
 		return false, cause
 	}
@@ -53,7 +52,7 @@ func Replace(reg Registry, desired []string, fired func(Combination), save func(
 			continue
 		}
 		if err := reg.Register(key.Accelerator(), func() { fired(key) }); err != nil {
-			return rollback(fmt.Errorf("快捷键 %s 无法注册或已被占用；旧配置保留", raw))
+			return rollback(i18n.Wrap(err, "hotkey.register", "hotkey", raw))
 		}
 		added = append(added, key)
 	}
@@ -67,7 +66,7 @@ func Replace(reg Registry, desired []string, fired func(Combination), save func(
 		}
 	}
 	if failed {
-		return true, errors.New("设置已保存但旧快捷键解绑失败；请重启程序")
+		return true, i18n.Error("hotkey.release")
 	}
 	return true, nil
 }

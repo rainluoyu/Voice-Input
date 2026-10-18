@@ -1,10 +1,10 @@
 package settings
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+
+	"voice_input/internal/i18n"
 )
 
 func DefaultPath() (string, error) { return defaultPath(os.Executable) }
@@ -12,7 +12,7 @@ func DefaultPath() (string, error) { return defaultPath(os.Executable) }
 func defaultPath(executable func() (string, error)) (string, error) {
 	path, err := executable()
 	if err != nil || !filepath.IsAbs(path) {
-		return "", errors.New("无法确定程序所在目录")
+		return "", i18n.Error("settings.executable")
 	}
 	return filepath.Join(filepath.Dir(path), "config.json"), nil
 }
@@ -38,11 +38,11 @@ func openLocal(path string) (*Store, bool, error) {
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, errors.New("无法检查程序目录中的 config.json")
+		return nil, false, i18n.Error("settings.local_stat")
 	}
 	store, err := open(path, false)
 	if err != nil {
-		return nil, true, fmt.Errorf("程序目录中的 config.json 无法读取：%w", err)
+		return nil, true, i18n.Wrap(err, "settings.local_read")
 	}
 	return store, true, nil
 }
@@ -67,22 +67,22 @@ func openWithLegacy(path string, legacyLookup func() (string, error)) (*Store, e
 	}
 	legacy, err := legacyLookup()
 	if err != nil {
-		return localOrError(path, errors.New("无法检查旧用户配置目录；不会覆盖或重置已有配置"))
+		return localOrError(path, i18n.Error("settings.legacy_dir"))
 	}
 	if _, err := os.Lstat(legacy); os.IsNotExist(err) {
 		// Another session may have created the local entry during the lookup.
 		return localOrDefault(path)
 	} else if err != nil {
-		return localOrError(path, errors.New("无法检查旧配置文件；不会创建新的配置"))
+		return localOrError(path, i18n.Error("settings.legacy_stat"))
 	}
 	previous, err := open(legacy, false)
 	if err != nil {
-		return localOrError(path, fmt.Errorf("旧配置无法迁移，原文件未修改：%w", err))
+		return localOrError(path, i18n.Wrap(err, "settings.legacy_invalid"))
 	}
 	store := &Store{path: path, config: Default()}
 	if err := store.saveWithPublish(previous.Get(), publishNoReplace); err != nil {
 		// Do not assume every filesystem reports an existing target the same way.
-		return localOrError(path, fmt.Errorf("旧配置迁移失败，原文件未修改；请检查程序目录权限和可用空间，或移至可写目录：%w", err))
+		return localOrError(path, i18n.Wrap(err, "settings.legacy_migrate"))
 	}
 	return store, nil
 }

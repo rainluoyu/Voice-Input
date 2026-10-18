@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"voice_input/internal/netapi"
+	"voice_input/internal/i18n"
 	"voice_input/internal/search"
 	"voice_input/internal/wininput"
 )
@@ -31,29 +31,31 @@ const (
 )
 
 type State struct {
-	TaskID   string       `json:"task_id"`
-	Intent   Intent       `json:"intent"`
-	Turn     uint64       `json:"turn"`
-	Question string       `json:"question"`
-	Replying bool         `json:"replying"`
-	Revision uint64       `json:"revision"`
-	Stage    Stage        `json:"stage"`
-	Visible  bool         `json:"visible"`
-	RawText  string       `json:"raw_text"`
-	Text     string       `json:"text"`
-	Notice   string       `json:"notice"`
-	HideAt   int64        `json:"hide_at"`
-	Pinned   bool         `json:"pinned"`
-	Mode     string       `json:"mode"`
-	Hotkey   string       `json:"hotkey"`
-	Level    float64      `json:"level"`
-	Sources  []search.Hit `json:"sources"`
+	TaskID        string        `json:"task_id"`
+	Intent        Intent        `json:"intent"`
+	Turn          uint64        `json:"turn"`
+	Question      string        `json:"question"`
+	Replying      bool          `json:"replying"`
+	Revision      uint64        `json:"revision"`
+	Stage         Stage         `json:"stage"`
+	Visible       bool          `json:"visible"`
+	RawText       string        `json:"raw_text"`
+	Text          string        `json:"text"`
+	Notice        string        `json:"notice"`
+	NoticeMessage *i18n.Message `json:"notice_i18n,omitempty"`
+	HideAt        int64         `json:"hide_at"`
+	Pinned        bool          `json:"pinned"`
+	Mode          string        `json:"mode"`
+	Hotkey        string        `json:"hotkey"`
+	Level         float64       `json:"level"`
+	Sources       []search.Hit  `json:"sources"`
 }
 type Result struct {
-	Status  string
-	Text    string
-	Notice  string
-	Sources []search.Hit
+	NoticeMessage *i18n.Message
+	Status        string
+	Text          string
+	Notice        string
+	Sources       []search.Hit
 }
 type Processor interface {
 	Transcribe(context.Context) (string, error)
@@ -61,6 +63,7 @@ type Processor interface {
 }
 type Starter interface{ Begin(context.Context) error }
 type TaskOptions struct {
+	Locale      i18n.Locale
 	Mode        string
 	Hotkey      string
 	RecordLimit time.Duration
@@ -88,7 +91,7 @@ type Controller struct {
 
 func New(processor Processor, injector wininput.Injector, autoHide time.Duration) *Controller {
 	return NewWithFactory(func(_ context.Context, _ string, intent Intent, _ func(Stage, float64)) (Processor, TaskOptions, error) {
-		return processor, TaskOptions{Mode: "live", Timeout: 45 * time.Second}, nil
+		return processor, TaskOptions{Locale: i18n.ZhCN, Mode: "live", Timeout: 45 * time.Second}, nil
 	}, injector, autoHide)
 }
 func NewWithFactory(factory Factory, injector wininput.Injector, autoHide time.Duration) *Controller {
@@ -132,7 +135,7 @@ func (c *Controller) Toggle(intent Intent) {
 		return
 	}
 	if (active(c.state.Stage) || c.state.Stage == Clarify) && c.state.Intent != intent {
-		c.state.Notice = "当前是" + c.state.Intent.Label() + "任务；请用 " + c.state.Hotkey + " 继续，或关闭浮窗取消后切换用途"
+		c.notice(i18n.M("app.switch_"+string(c.state.Intent), "hotkey", c.state.Hotkey))
 		c.publish()
 		return
 	}
@@ -141,7 +144,7 @@ func (c *Controller) Toggle(intent Intent) {
 		return
 	}
 	if active(c.state.Stage) {
-		c.state.Notice = "仍在处理中；请稍候，或关闭浮窗取消"
+		c.notice(i18n.M("app.busy"))
 		c.publish()
 		return
 	}
@@ -184,12 +187,15 @@ func (c *Controller) startTurn(replying bool) {
 		c.cancel()
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
+	if replying {
+		c.ctx = context.WithValue(c.ctx, taskLocaleKey{}, c.options.Locale)
+	}
 	c.stopped = time.Time{}
 	c.state.Turn++
 	c.state.Stage, c.state.Replying, c.state.Visible, c.state.Level = Recording, replying, true, 0
-	c.state.Notice = "正在启动录音"
+	c.notice(i18n.M("app.recording_start"))
 	if replying {
-		c.state.Notice = "正在启动补充录音"
+		c.notice(i18n.M("app.reply_start"))
 	}
 	c.processor = nil
 	c.options = TaskOptions{}
@@ -216,6 +222,10 @@ func (c *Controller) begin(ctx context.Context, id string, ready chan struct{}, 
 		c.mu.Unlock()
 		return
 	}
+	options.Locale = TaskLocale(ctx, options.Locale)
+	if options.Locale == "" {
+		options.Locale = i18n.ZhCN
+	}
 	c.processor, c.options = processor, options
 	if c.options.Timeout <= 0 {
 		c.options.Timeout = 90 * time.Second
@@ -225,12 +235,12 @@ func (c *Controller) begin(ctx context.Context, id string, ready chan struct{}, 
 		c.state.Hotkey = options.Hotkey
 	}
 	if err != nil {
-		c.terminal(Error, netapi.SafeMessage(err, "初始化失败；请检查设置与安全凭据"))
+		c.terminalMessage(Error, i18n.FromError(err, "app.init_failed"))
 		c.mu.Unlock()
 		return
 	}
 	if c.state.Stage == ASR {
-		c.state.Notice = ""
+		c.notice(i18n.Message{})
 		c.startProcessingContext()
 	}
 	if c.ctx.Err() != nil {
@@ -240,7 +250,7 @@ func (c *Controller) begin(ctx context.Context, id string, ready chan struct{}, 
 	}
 	ctx = c.ctx
 	if c.state.Stage == Recording {
-		c.state.Notice = "正在打开麦克风"
+		c.notice(i18n.M("app.microphone_open"))
 	}
 	c.publish()
 	c.mu.Unlock()
@@ -253,11 +263,11 @@ func (c *Controller) begin(ctx context.Context, id string, ready chan struct{}, 
 		return
 	}
 	if err != nil {
-		c.recordingFailure(netapi.SafeMessage(err, "麦克风启动失败；检查设备、权限和设置"))
+		c.recordingFailure(i18n.FromError(err, "app.microphone_failed"))
 		return
 	}
 	if c.state.Stage == Recording {
-		c.state.Notice = ""
+		c.notice(i18n.Message{})
 		c.publish()
 		if options.RecordLimit > 0 {
 			c.recordTimer = time.AfterFunc(options.RecordLimit, func() {
@@ -274,7 +284,7 @@ func (c *Controller) stopRecording() {
 	c.stopRecordTimer()
 	c.stopped = time.Now()
 	c.state.Stage, c.state.Level = ASR, 0
-	c.state.Notice = ""
+	c.notice(i18n.Message{})
 	c.publish()
 	if c.options.Timeout > 0 {
 		c.startProcessingContext()
@@ -297,7 +307,7 @@ func (c *Controller) notify(ctx context.Context, id string, turn uint64, stage S
 			return
 		}
 		c.state.Stage = stage
-		c.state.Notice = ""
+		c.notice(i18n.Message{})
 	} else {
 		return
 	}
@@ -306,10 +316,18 @@ func (c *Controller) notify(ctx context.Context, id string, turn uint64, stage S
 func (c *Controller) valid(ctx context.Context, id string, turn uint64) bool {
 	return ctx.Err() == nil && c.state.TaskID == id && c.state.Turn == turn && active(c.state.Stage)
 }
-func (c *Controller) terminal(stage Stage, notice string) {
+func (c *Controller) terminalMessage(stage Stage, message i18n.Message) {
+	c.terminal(stage, "", message)
+}
+
+func (c *Controller) terminal(stage Stage, notice string, messages ...i18n.Message) {
 	c.stopRecordTimer()
 	c.stopTimer()
 	c.state.Stage, c.state.Notice, c.state.Level = stage, notice, 0
+	c.state.NoticeMessage = nil
+	if len(messages) != 0 {
+		c.notice(messages[0])
+	}
 	c.state.Question, c.state.Replying = "", false
 	if c.cancel != nil {
 		c.cancel()
@@ -333,10 +351,14 @@ func (c *Controller) terminal(stage Stage, notice string) {
 
 // awaitReply releases the completed turn, but keeps the task and question alive.
 // Waiting for a person does not consume a processing timeout or a hide timer.
-func (c *Controller) awaitReply(question, notice string) {
+func (c *Controller) awaitReply(question, notice string, messages ...i18n.Message) {
 	c.stopRecordTimer()
 	c.stopTimer()
 	c.state.Stage, c.state.Question, c.state.Notice = Clarify, question, notice
+	c.state.NoticeMessage = nil
+	if len(messages) != 0 {
+		c.notice(messages[0])
+	}
 	c.state.Replying, c.state.Visible, c.state.Level = false, true, 0
 	if c.cancel != nil {
 		c.cancel()
@@ -344,11 +366,15 @@ func (c *Controller) awaitReply(question, notice string) {
 	c.publish()
 }
 
-func (c *Controller) recordingFailure(notice string) {
+func (c *Controller) recordingFailure(message i18n.Message) {
 	if c.state.Replying {
-		c.awaitReply(c.state.Question, notice+"；可重新录制补充")
+		retry := i18n.M(message.Code + ".retry")
+		if retry.Text(i18n.EN) != "" {
+			message = retry
+		}
+		c.awaitReply(c.state.Question, "", message)
 	} else {
-		c.terminal(Error, notice)
+		c.terminalMessage(Error, message)
 	}
 }
 
@@ -391,14 +417,14 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		return
 	}
 	if err != nil {
-		c.recordingFailure(netapi.SafeMessage(err, "语音识别失败；检查麦克风和服务设置"))
+		c.recordingFailure(i18n.FromError(err, "app.asr_failed"))
 		c.mu.Unlock()
 		return
 	}
 	conversation := c.conversation.Clone()
 	if c.state.Replying {
 		if strings.TrimSpace(raw) == "" || len(raw) > 32000 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
-			c.recordingFailure("未识别到有效的补充内容")
+			c.recordingFailure(i18n.M("app.answer_empty"))
 			c.mu.Unlock()
 			return
 		}
@@ -407,12 +433,13 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		conversation.Original = raw
 	}
 	if err := conversation.Validate(); err != nil {
-		c.terminal(Error, err.Error())
+		c.terminalMessage(Error, i18n.FromError(err, "app.conversation_large"))
 		c.mu.Unlock()
 		return
 	}
 	c.conversation = conversation
-	c.state.RawText, c.state.Stage, c.state.Notice = conversation.Transcript(), LLM, ""
+	c.state.RawText, c.state.Stage = conversation.TranscriptForLocale(c.options.Locale), LLM
+	c.notice(i18n.Message{})
 	c.publish()
 	c.mu.Unlock()
 	var result Result
@@ -421,7 +448,7 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 	} else if processor, ok := p.(ConversationProcessor); ok {
 		result, err = processor.CompleteConversation(ctx, conversation.Clone())
 	} else {
-		err = errors.New("当前处理器不支持语音续答")
+		err = i18n.Error("app.unsupported_reply")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -430,35 +457,40 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		return
 	}
 	if err != nil {
-		c.terminal(Error, netapi.SafeMessage(err, "语义整理失败；可复制原文"))
+		c.terminalMessage(Error, i18n.FromError(err, "app.llm_failed"))
 		return
 	}
 	if err = validate(result); err != nil {
-		c.terminal(Error, "结果格式无效；禁止自动回填")
+		c.terminalMessage(Error, i18n.M("app.result_invalid"))
 		return
 	}
 	c.state.Text, c.state.Sources = result.Text, result.Sources
 	switch result.Status {
 	case "skip":
-		c.terminal(Skip, result.Notice)
+		if result.NoticeMessage != nil {
+			c.terminalMessage(Skip, *result.NoticeMessage)
+		} else {
+			c.terminal(Skip, result.Notice)
+		}
 	case "clarify":
 		if c.state.Intent != Dialogue {
-			c.terminal(Error, "润色模式不执行任务或追问；请复制原文，或使用 AI 对话快捷键重新开始")
+			c.terminalMessage(Error, i18n.M("app.dictation_clarify"))
 			return
 		}
 		if len(c.conversation.Clarifications) >= MaxClarifications {
-			c.terminal(Error, "已达到 8 轮补充上限，请关闭后重新开始任务")
+			c.terminalMessage(Error, i18n.M("app.clarification_limit"))
 			return
 		}
 		c.awaitReply(result.Notice, "")
 	case "insert":
 		normalized, normalizeErr := wininput.Normalize(result.Text)
 		if normalizeErr != nil {
-			c.terminal(Error, normalizeErr.Error())
+			c.terminalMessage(Error, i18n.FromError(normalizeErr, "app.input_failed"))
 			return
 		}
 		c.state.Text, result.Text = normalized, normalized
-		c.state.Stage, c.state.Notice = Injecting, ""
+		c.state.Stage = Injecting
+		c.notice(i18n.Message{})
 		c.publish()
 		// Preparation can wait for held modifiers. Cancellation remains effective
 		// until the short final commit; no foreground or control identity is read.
@@ -473,11 +505,7 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 			err = commit()
 		}
 		if err != nil || commit == nil {
-			notice := "输入提交失败；请复制结果"
-			if err != nil {
-				notice = err.Error()
-			}
-			c.terminal(Error, notice)
+			c.terminalMessage(Error, i18n.FromError(err, "app.input_failed"))
 			return
 		}
 		c.terminal(Done, "")
@@ -507,7 +535,7 @@ func validate(r Result) error {
 }
 func (c *Controller) finishTimeout(ctx context.Context, id string, turn uint64) {
 	if c.state.TaskID == id && c.state.Turn == turn && active(c.state.Stage) && ctx.Err() != nil {
-		c.terminal(Error, "处理超时或已取消；未回填")
+		c.terminalMessage(Error, i18n.M("app.timeout"))
 	}
 }
 func (c *Controller) Close() {
@@ -520,7 +548,7 @@ func (c *Controller) Close() {
 	}
 	if active(c.state.Stage) || c.state.Stage == Clarify {
 		c.state.Stage = Cancelled
-		c.state.Notice = "已取消，不再回填"
+		c.notice(i18n.M("app.cancelled"))
 	}
 	c.state.Visible, c.state.Pinned, c.state.Level = false, false, 0
 	c.state.Question, c.state.Replying = "", false
@@ -560,14 +588,14 @@ func (c *Controller) CopyText(taskID string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if taskID == "" || taskID != c.state.TaskID {
-		return "", errors.New("任务已变化，请重新点击复制")
+		return "", i18n.Error("app.copy_stale")
 	}
 	text := c.state.Text
 	if text == "" {
 		text = c.state.RawText
 	}
 	if text == "" || strings.ContainsRune(text, 0) {
-		return "", errors.New("当前没有可完整复制的文字")
+		return "", i18n.Error("app.copy_empty")
 	}
 	return text, nil
 }

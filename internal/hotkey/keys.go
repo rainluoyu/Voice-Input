@@ -1,10 +1,10 @@
 package hotkey
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 
+	"voice_input/internal/i18n"
 	"voice_input/internal/task"
 )
 
@@ -45,7 +45,7 @@ func Parse(raw string) (Combination, error) {
 		case "win", "super":
 			result.Modifiers |= 8
 		default:
-			return Combination{}, errors.New("快捷键修饰键无效")
+			return Combination{}, i18n.Error("hotkey.modifier")
 		}
 	}
 	key := strings.TrimSpace(parts[len(parts)-1])
@@ -57,7 +57,7 @@ func Parse(raw string) (Combination, error) {
 		result.Key = namedKeys[key]
 	}
 	if result.Key == 0 {
-		return Combination{}, errors.New("快捷键按键无效；支持字母、数字、F1–F24 和 Windows 常用按键")
+		return Combination{}, i18n.Error("hotkey.key")
 	}
 	return result, nil
 }

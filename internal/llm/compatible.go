@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"voice_input/internal/i18n"
 	"voice_input/internal/netapi"
 	"voice_input/internal/search"
 	"voice_input/internal/settings"
@@ -40,6 +41,7 @@ type Provider interface {
 	Complete(context.Context, Request) (Result, error)
 }
 type Compatible struct {
+	Locale         i18n.Locale
 	Client         *http.Client
 	Config         settings.LLM
 	Key            string
@@ -109,7 +111,7 @@ func (p Compatible) Complete(ctx context.Context, input Request) (Result, error)
 			return Result{}, netapi.Fail("llm", "config")
 		}
 	}
-	prompt := promptFor(input.Intent, p.Config)
+	prompt := promptFor(input.Intent, p.Config, p.Locale)
 	if input.Intent == task.Dictation || p.Config.MaxToolRounds == 0 {
 		p.Search = nil
 	}

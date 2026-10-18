@@ -4,12 +4,13 @@ package wininput
 
 import (
 	"context"
-	"errors"
 	"time"
 	"unsafe"
 
 	"github.com/wailsapp/wails/v3/pkg/w32"
 	"golang.org/x/sys/windows"
+
+	"voice_input/internal/i18n"
 )
 
 var user32 = windows.NewLazySystemDLL("user32.dll")
@@ -51,7 +52,7 @@ func (Native) Prepare(ctx context.Context, text string) (func() error, error) {
 			break
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.New("修饰键仍按下；为避免误操作，请复制结果")
+			return nil, i18n.Error("input.modifiers_prepare")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

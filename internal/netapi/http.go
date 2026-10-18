@@ -13,12 +13,29 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"voice_input/internal/i18n"
 )
 
 type Error struct {
 	Service string
 	Code    string
 	Status  int
+}
+
+func (e *Error) I18nMessage() i18n.Message {
+	service := e.Service
+	switch service {
+	case "asr", "llm", "exa", "audio":
+	default:
+		service = "service"
+	}
+	switch e.Code {
+	case "mode", "dictation_clarify", "auth", "rate", "server", "network", "timeout", "cancelled", "response", "large", "upload_large", "request", "config", "quiet", "device":
+		return i18n.M("net." + service + "." + e.Code)
+	default:
+		return i18n.Message{}
+	}
 }
 
 func (e *Error) Error() string {
@@ -40,10 +57,10 @@ func SafeMessage(err error, fallback string) string {
 func Endpoint(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return errors.New("服务地址必须为无用户名、查询参数或片段的完整 URL")
+		return i18n.Error("net.endpoint")
 	}
 	if u.Scheme != "https" && !(u.Scheme == "http" && Loopback(u.Hostname())) {
-		return errors.New("仅允许 HTTPS，或本机回环 HTTP 地址")
+		return i18n.Error("net.https")
 	}
 	return nil
 }
@@ -55,7 +72,7 @@ func Client() (*http.Client, error) {
 	if raw := os.Getenv("PROXY_URL"); raw != "" {
 		proxy, err := url.Parse(raw)
 		if err != nil || proxy.Host == "" || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5" && proxy.Scheme != "socks5h") {
-			return nil, errors.New("PROXY_URL 格式或协议无效")
+			return nil, i18n.Error("net.proxy")
 		}
 		transport.Proxy = func(r *http.Request) (*url.URL, error) {
 			if Loopback(r.URL.Hostname()) {
@@ -107,14 +124,14 @@ func Do(ctx context.Context, client *http.Client, req *http.Request, service str
 }
 func CheckJSON(data []byte) error {
 	if !utf8.Valid(data) {
-		return errors.New("JSON 编码无效")
+		return i18n.Error("json.encoding")
 	}
 	scanner := json.NewDecoder(bytes.NewReader(data))
 	if err := scanValue(scanner, 0); err != nil {
 		return err
 	}
 	if _, err := scanner.Token(); err != io.EOF {
-		return errors.New("JSON 包含多余数据")
+		return i18n.Error("json.trailing")
 	}
 
 	return nil
@@ -127,11 +144,11 @@ func StrictJSON(data []byte, out any) error {
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return errors.New("JSON 字段或编码无效")
+		return i18n.Error("json.fields")
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF {
-		return errors.New("JSON 包含多余数据")
+		return i18n.Error("json.trailing")
 	}
 	return nil
 }
@@ -144,11 +161,11 @@ func ModelPath(base, suffix string) string {
 // last occurrence of a security-relevant field such as status or tool name.
 func scanValue(dec *json.Decoder, depth int) error {
 	if depth > 64 {
-		return errors.New("JSON 嵌套过深")
+		return i18n.Error("json.depth")
 	}
 	token, err := dec.Token()
 	if err != nil {
-		return errors.New("JSON 无效")
+		return i18n.Error("json.invalid")
 	}
 	delimiter, ok := token.(json.Delim)
 	if !ok {
@@ -160,11 +177,11 @@ func scanValue(dec *json.Decoder, depth int) error {
 		for dec.More() {
 			key, err := dec.Token()
 			if err != nil {
-				return errors.New("JSON 无效")
+				return i18n.Error("json.invalid")
 			}
 			name, ok := key.(string)
 			if !ok || keys[name] {
-				return errors.New("JSON 字段重复或无效")
+				return i18n.Error("json.duplicate")
 			}
 			keys[name] = true
 			if err := scanValue(dec, depth+1); err != nil {
@@ -178,11 +195,11 @@ func scanValue(dec *json.Decoder, depth int) error {
 			}
 		}
 	default:
-		return errors.New("JSON 无效")
+		return i18n.Error("json.invalid")
 	}
 	closing, err := dec.Token()
 	if err != nil || delimiter == '{' && closing != json.Delim('}') || delimiter == '[' && closing != json.Delim(']') {
-		return errors.New("JSON 无效")
+		return i18n.Error("json.invalid")
 	}
 	return nil
 }
