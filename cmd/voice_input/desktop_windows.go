@@ -18,6 +18,7 @@ import (
 	"voice_input/internal/asr"
 	"voice_input/internal/audio"
 	"voice_input/internal/branding"
+	"voice_input/internal/buildmeta"
 	"voice_input/internal/hotkey"
 	"voice_input/internal/llm"
 	"voice_input/internal/netapi"
@@ -25,8 +26,6 @@ import (
 	"voice_input/internal/settings"
 	"voice_input/internal/wininput"
 )
-
-const Version = "0.2.0"
 
 type Desktop struct {
 	controller   *core.Controller
@@ -103,7 +102,7 @@ func (d *Desktop) GetSettings() SettingsView {
 			warning = "Windows 安全凭据不可用；检查用户会话与 Credential Manager"
 		}
 	}
-	return SettingsView{Config: d.store.Get(), Keys: keys, Version: Version, PromptDefaults: llm.DefaultPrompts(), CredentialMessage: warning}
+	return SettingsView{Config: d.store.Get(), Keys: keys, Version: buildmeta.Version, PromptDefaults: llm.DefaultPrompts(), CredentialMessage: warning}
 }
 func (d *Desktop) SaveSettings(cfg settings.Config) ActionResult {
 	if !d.testMu.TryLock() {

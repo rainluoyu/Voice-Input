@@ -46,7 +46,7 @@ with sync_playwright() as p:
                 if fail_settings_read:
                     route.fulfill(status=500, content_type="application/json", body=json.dumps({"kind": "RuntimeError", "message": "fixture failure"}))
                     return
-                result = {"config": config, "keys": keys, "version": "0.2.0", "prompt_defaults": {"dictation": "修正语病、成语和冗余表达，保留原意。", "dialogue": "理解请求，生成用户需要的正文。"}}
+                result = {"config": config, "keys": keys, "version": "1.4.2-rc.1", "prompt_defaults": {"dictation": "修正语病、成语和冗余表达，保留原意。", "dialogue": "理解请求，生成用户需要的正文。"}}
             elif method == "GetPresentation":
                 result = {"mode": config["mode"], "hotkey": config["hotkey"], "ai_hotkey": config["ai_hotkey"]}
             elif method == "Snapshot":
@@ -93,6 +93,7 @@ with sync_playwright() as p:
     page.goto("http://wails.localhost/?view=settings")
     page.wait_for_load_state("networkidle")
     assert page.locator("#save").is_enabled()
+    assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
     page.locator("#tab-models").click()
     assert page.title() == "真实语义输入"
     assert page.locator("h1").inner_text() == "真实语义输入"

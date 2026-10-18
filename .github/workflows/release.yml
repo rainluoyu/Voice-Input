@@ -1,0 +1,256 @@
+name: Windows x64 release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Bare SemVer (for example 1.2.3 or 1.2.3-rc.1); artifacts only'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: '1'
+      GOTOOLCHAIN: local
+      VOICE_INPUT_REAL_ACCEPTANCE: ''
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Read Go toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r directive value _; do
+            if [[ "$directive" == toolchain ]]; then
+              printf 'version=%s\n' "${value#go}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < go.mod
+          printf 'go.mod must declare a toolchain\n' >&2
+          exit 1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.toolchain.outputs.version }}
+
+      - name: Verify Go toolchain
+        shell: bash
+        env:
+          EXPECTED_GO: ${{ steps.toolchain.outputs.version }}
+        run: |
+          set -euo pipefail
+          go version
+          [[ "$(go env GOVERSION)" == "go$EXPECTED_GO" ]]
+
+      - name: Validate version and record commit
+        id: version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_REF: ${{ github.ref }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            push)
+              [[ "$TAG_REF" == refs/tags/v* ]]
+              RAW_VERSION="${TAG_REF#refs/tags/v}"
+              ;;
+            workflow_dispatch) RAW_VERSION="$DISPATCH_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          VERSION="$(go run ./tools/winresource -version "$RAW_VERSION" -print-version)"
+          [[ -n "$VERSION" && "$VERSION" == "$RAW_VERSION" ]]
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major !== 24 || minor < 12) process.exit(1)'
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+
+      - name: Test workflow guards
+        run: uv run --no-project --with 'PyYAML==6.0.3' tests/release_workflow.py
+
+      - name: Test browser UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="${TMPDIR:-/tmp}/voice_input-ui-tools"
+          if [[ ! -f "$tools/pyproject.toml" ]]; then
+            uv init --bare --name voice-input-ui-tools "$tools"
+          fi
+          uv add --project "$tools" 'playwright==1.64.0'
+          uv run --project "$tools" playwright install --with-deps chromium --only-shell
+          bash scripts/test-ui.sh
+
+      - name: Generate Windows resources
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: go run ./tools/winresource -version "$VERSION"
+
+      - name: Test and vet on Linux
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          go test -race -timeout=90s ./...
+          go vet ./...
+          VOICE_INPUT_TEST_VERSION="$VERSION" go test -trimpath -ldflags="-X=voice_input/internal/buildmeta.Version=$VERSION" -run '^TestLinkedVersion$' ./internal/buildmeta
+
+      - name: Cross-compile Windows x64
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          go vet ./...
+          mkdir -p bin
+          go build -trimpath -ldflags="-H=windowsgui -X=voice_input/internal/buildmeta.Version=$VERSION" -o bin/voice_input.exe ./cmd/voice_input
+          for package in wininput audio settings app popup instance; do
+            go test -c -o "bin/$package.test.exe" "./internal/$package"
+          done
+          printf 'Windows x64 binaries compiled, not executed.\n'
+
+      - name: Package Windows x64
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: go run ./tools/package -exe bin/voice_input.exe -version "$VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-amd64
+          if-no-files-found: error
+          path: |
+            bin/voice_input-${{ steps.version.outputs.version }}-windows-amd64.zip
+            bin/voice_input-${{ steps.version.outputs.version }}-windows-amd64.zip.sha256
+
+      - name: Archive matching source for manual builds
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix="voice_input-$VERSION/" --output="bin/voice_input-$VERSION-source.zip" "$BUILD_SHA"
+          cd bin
+          sha256sum "voice_input-$VERSION-source.zip" > "voice_input-$VERSION-source.zip.sha256"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: source
+          if-no-files-found: error
+          path: |
+            bin/voice_input-${{ steps.version.outputs.version }}-source.zip
+            bin/voice_input-${{ steps.version.outputs.version }}-source.zip.sha256
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-amd64
+          path: release-assets
+
+      - name: Verify release artifacts
+        shell: bash
+        working-directory: release-assets
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob dotglob
+          files=(*)
+          ZIP="voice_input-$VERSION-windows-amd64.zip"
+          [[ ${#files[@]} -eq 2 && -f "$ZIP" && -f "$ZIP.sha256" ]]
+          read -r checksum checksum_file < "$ZIP.sha256"
+          [[ "$checksum" =~ ^[0-9a-f]{64}$ && "$checksum_file" == "$ZIP" ]]
+          sha256sum --check --strict "$ZIP.sha256"
+
+      - name: Verify remote tag and create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          BUILD_SHA: ${{ needs.build.outputs.sha }}
+          TAG_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          [[ "$TAG_REF" == "refs/tags/$TAG" ]]
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            printf 'Release %s already exists; refusing to overwrite it.\n' "$TAG" >&2
+            exit 1
+          fi
+          object="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq '.object | [.type, .sha] | @tsv')"
+          read -r object_type object_sha <<< "$object"
+          while [[ "$object_type" == tag ]]; do
+            object="$(gh api "repos/$GH_REPO/git/tags/$object_sha" --jq '.object | [.type, .sha] | @tsv')"
+            read -r object_type object_sha <<< "$object"
+          done
+          [[ "$object_type" == commit && "$object_sha" == "$BUILD_SHA" ]]
+          printf '%s\n' \
+            "Windows x64 portable build from commit $BUILD_SHA." \
+            '' \
+            "Source ZIP: $GITHUB_SERVER_URL/$GH_REPO/archive/refs/tags/$TAG.zip" \
+            "Source tar.gz: $GITHUB_SERVER_URL/$GH_REPO/archive/refs/tags/$TAG.tar.gz" \
+            'GitHub provides these source archives from the same release tag.' \
+            '' \
+            'Unsigned build. Windows desktop acceptance was not executed; Windows binaries were cross-compiled only.' \
+            > release-notes.md
+          ZIP="release-assets/voice_input-$VERSION-windows-amd64.zip"
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" "$ZIP" "$ZIP.sha256" --verify-tag --title "$TAG" --notes-file release-notes.md "${flags[@]}"

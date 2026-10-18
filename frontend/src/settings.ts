@@ -59,7 +59,7 @@ export function mountSettings(root:HTMLElement) {
  </div><p class="hint" id="budget-hint">工具轮数为 T，模型请求上限为 T+1；T=0 时不使用工具。</p></section>
  </section>
  </fieldset></form>
- <footer class="save-bar"><div class="save-status"><span id="summary">v0.2.0</span><p id="save-message" role="status"></p></div><div class="save-actions"><button id="settings-close" type="button">关闭设置</button><button id="save" type="submit" form="preferences" class="primary" disabled>保存设置</button></div></footer>
+ <footer class="save-bar"><div class="save-status"><span id="summary">加载设置…</span><p id="save-message" role="status"></p></div><div class="save-actions"><button id="settings-close" type="button">关闭设置</button><button id="save" type="submit" form="preferences" class="primary" disabled>保存设置</button></div></footer>
  </main>`;
  const el = <T extends HTMLElement>(id:string) => root.querySelector<T>(`#${id}`)!;
  const input = (id:string) => el<HTMLInputElement>(id);

@@ -17,37 +17,30 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tc-hib/winres"
+	"voice_input/internal/buildmeta"
 )
 
 func main() {
 	binary := flag.String("exe", "bin/voice_input.exe", "Windows executable")
-	output := flag.String("out", "bin/voice_input-0.2.0-windows-amd64.zip", "portable archive")
+	output := flag.String("out", "", "portable archive (default bin/voice_input-<version>-windows-amd64.zip)")
+	rawVersion := flag.String("version", buildmeta.Version, "bare release SemVer")
 	flag.Parse()
-	if err := pack(*binary, *output, "."); err != nil {
+	release, err := buildmeta.Parse(*rawVersion)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *output == "" {
+		*output = "bin/voice_input-" + release.Canonical + "-windows-amd64.zip"
+	}
+	if err := pack(*binary, *output, ".", release.Canonical); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(*output)
 }
-func pack(binary, output, root string) error {
-	file, err := pe.Open(binary)
-	if err != nil {
-		return err
-	}
-	if file.Machine != pe.IMAGE_FILE_MACHINE_AMD64 {
-		file.Close()
-		return fmt.Errorf("not a Windows x64 executable")
-	}
-	section := file.Section(".rsrc")
-	if section == nil {
-		file.Close()
-		return fmt.Errorf("Windows resources/manifest missing")
-	}
-	resourceData, err := section.Data()
-	file.Close()
-	if err != nil || !bytes.Contains(resourceData, []byte(`level="asInvoker"`)) || bytes.Contains(resourceData, []byte("requireAdministrator")) {
-		return fmt.Errorf("unsafe or invalid Windows manifest")
-	}
-	build, err := buildinfo.ReadFile(binary)
+func pack(binary, output, root, rawVersion string) error {
+	release, err := buildmeta.Parse(rawVersion)
 	if err != nil {
 		return err
 	}
@@ -55,8 +48,30 @@ func pack(binary, output, root string) error {
 	if err != nil {
 		return err
 	}
+	file, err := pe.NewFile(bytes.NewReader(content))
+	if err != nil {
+		return err
+	}
+	_, isPE64 := file.OptionalHeader.(*pe.OptionalHeader64)
+	if file.Machine != pe.IMAGE_FILE_MACHINE_AMD64 || !isPE64 || file.Characteristics&pe.IMAGE_FILE_EXECUTABLE_IMAGE == 0 || file.Characteristics&pe.IMAGE_FILE_DLL != 0 {
+		return fmt.Errorf("not a Windows x64 executable")
+	}
+	build, err := buildinfo.Read(bytes.NewReader(content))
+	if err != nil {
+		return err
+	}
+	if err := validateBuild(build, release); err != nil {
+		return err
+	}
+	resources, err := winres.LoadFromEXE(bytes.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("Windows resources missing or invalid: %w", err)
+	}
+	if err := validateResources(resources, release); err != nil {
+		return err
+	}
 	sum := sha256.Sum256(content)
-	metadata, _ := json.MarshalIndent(map[string]any{"project": "voice_input", "version": "0.2.0", "go": build.GoVersion, "sha256": hex.EncodeToString(sum[:]), "platform": "windows/amd64", "desktop_acceptance": "pending", "signed": false}, "", "  ")
+	metadata, _ := json.MarshalIndent(map[string]any{"project": "voice_input", "version": release.Canonical, "go": build.GoVersion, "sha256": hex.EncodeToString(sum[:]), "platform": "windows/amd64", "desktop_acceptance": "pending", "signed": false}, "", "  ")
 	out, err := os.Create(output)
 	if err != nil {
 		return err
@@ -81,7 +96,7 @@ func pack(binary, output, root string) error {
 	if err = add("voice_input/voice_input.exe", content); err != nil {
 		return err
 	}
-	for _, path := range []string{"README.md", "README.zh-CN.md", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md", "docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md", "docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html"} {
+	for _, path := range []string{"LICENSE", "README.md", "README.zh-CN.md", "docs/images/settings.png", "docs/images/prompts.png", "docs/images/dialogue.png", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md", "docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md", "docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html"} {
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			return err

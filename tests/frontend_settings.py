@@ -76,7 +76,7 @@ with sync_playwright() as p:
     def fulfill_read(ok=True, message=""):
         wait_pending(pending_read)
         route = pending_read.pop(0)
-        result = {"config": config, "prompt_defaults": defaults, "keys": {"asr": False, "llm": False, "exa": False}, "version": "0.2.0", "credential_message": message} if ok else {"kind": "RuntimeError", "message": "fixture"}
+        result = {"config": config, "prompt_defaults": defaults, "keys": {"asr": False, "llm": False, "exa": False}, "version": "1.4.2-rc.1", "credential_message": message} if ok else {"kind": "RuntimeError", "message": "fixture"}
         route.fulfill(status=200 if ok else 500, content_type="application/json", body=json.dumps(result, ensure_ascii=False))
 
     def tab(name):
@@ -97,8 +97,10 @@ with sync_playwright() as p:
     wait_pending(pending_read)
     for selector in ("#mode", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr", "#refresh-devices", "#save"):
         assert page.locator(selector).is_disabled(), selector
+    assert page.locator("#summary").inner_text() == "加载设置…"
     fulfill_read()
     page.wait_for_function('!document.querySelector("#save").disabled')
+    assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
     tab("models")
     assert page.locator("#test-asr").is_enabled()
     assert page.locator("#test-llm").is_enabled()

@@ -2,7 +2,7 @@
 
 ## 工具链与结构
 
-- Go 1.26.9，由 `go.mod` 的 `toolchain` 声明选择；Node.js 22.12+。
+- Go 1.26.9，由 `go.mod` 的 `toolchain` 声明选择；CI 使用 Node.js 24.12+。
 - Wails 与前端 runtime 固定为 `v3.0.0-beta.30`。Go/npm 锁文件均应提交。
 - Windows 10/11 x64 为运行目标；Linux 入口仅显示平台提示。
 
@@ -27,10 +27,11 @@
 ```powershell
 npm --prefix frontend ci
 npm --prefix frontend run build
-go run ./tools/winresource
+$version = go run ./tools/winresource -print-version
+go run ./tools/winresource -version $version
 $env:VOICE_INPUT_REAL_ACCEPTANCE = ""
 go test -timeout=90s ./...
-go build -trimpath -ldflags="-H windowsgui" -o bin/voice_input.exe ./cmd/voice_input
+go build -trimpath -ldflags="-H=windowsgui -X=voice_input/internal/buildmeta.Version=$version" -o bin/voice_input.exe ./cmd/voice_input
 .\bin\voice_input.exe
 ```
 
@@ -51,12 +52,13 @@ go run ./tools/winresource -png frontend/public/app-icon.png
 ```bash
 export VOICE_INPUT_REAL_ACCEPTANCE=
 npm --prefix frontend run build
-go run ./tools/winresource
+version="$(go run ./tools/winresource -print-version)"
+go run ./tools/winresource -version "$version"
 go test -race -timeout=90s ./...
 go vet ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet ./...
 mkdir -p bin
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-H windowsgui' -o bin/voice_input.exe ./cmd/voice_input
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-H=windowsgui -X=voice_input/internal/buildmeta.Version=$version" -o bin/voice_input.exe ./cmd/voice_input
 for package in wininput audio settings app popup instance; do
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o "bin/$package.test.exe" "./internal/$package"
 done
@@ -92,13 +94,33 @@ Windows 二进制在这里仅编译，不执行。离线工作时需预先具备
 构建后执行：
 
 ```bash
-go run ./tools/package -exe bin/voice_input.exe -out bin/voice_input-0.2.0-windows-amd64.zip
+go run ./tools/package -exe bin/voice_input.exe -version "$version"
 ```
 
-打包器验证 PE 架构和普通权限 manifest，只收录明确白名单：程序、双语 README、公开文档、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
+`version` 必须与构建时一致。也可以用 `./scripts/package.sh 0.2.1` 构建指定版本；省略参数时使用共享默认版本。版本、资源与文件名不得分别修改。
 
-输出 `.zip.sha256` 对应 ZIP 校验值，`BUILDINFO.json` 记录 EXE 摘要、平台、工具链及未签名/桌面待验收状态。Wails 根 MIT 声明同时对应锁定版本的同源前端运行时；其他依赖按各自声明收集。项目本身尚未指定许可证。
+打包器回读实际 x64 PE、Go 目标、版本资源及普通权限 manifest，只收录明确白名单：程序、项目 LICENSE、双语 README、公开文档、三张审核后的界面示例、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
 
-不要提交真实配置、密钥、音频、截图、原始服务报告、代理工作目录、构建产物或个人部署资料。提交前检查暂存内容；忽略规则不能清除已进入 Git 历史的资料。
+输出 `voice_input-<version>-windows-amd64.zip` 及对应 `.zip.sha256`；`BUILDINFO.json` 记录回验后的产品版本、EXE 摘要、平台、工具链及未签名/桌面待验收状态。`-trimpath` 保留以避免写入个人构建路径；Go 在此模式不记录链接参数，因此版本注入通过统一构建命令和宿主注入测试保证，打包器不声称能直接读取运行期 Go 变量。
+
+项目采用 [GPL-3.0-only](../LICENSE)。Wails 根 MIT 声明同时对应锁定版本的同源前端运行时，其他依赖按各自声明收集。发布二进制时还须提供匹配版本的对应源码，不以附上 LICENSE 代替源码义务。
+
+不要提交真实配置、密钥、音频、私人桌面或原始回归截图、原始服务报告、代理工作目录、构建产物或个人部署资料。仅 `docs/images/` 中明确审核、使用虚构数据的文档图片可提交和打包。提交前检查暂存内容；忽略规则不能清除已进入 Git 历史的资料。
+
+## 文档截图
+
+`tests/docs_screenshots.py` 使用实际前端与拦截的 Wails 响应，生成输入设置、提示词、澄清/结果三张图。先在本机回环启动 Vite 预览，再通过已准备 Playwright 的隔离 uv 项目运行该脚本；`UI_TEST_PORT` 指定预览端口，`--out` 可将试拍图留在仓库外。不会调用麦克风、Windows 或真实服务。
+
+只发布审核后的三张图；必须注明浏览器预览与示例数据，不能冒充 Windows 原生任务浮窗实拍。图片变更后重新核对隐私、中文字形和 README/ZIP 链接。
+
+## GitHub 自动发布
+
+`.github/workflows/release.yml` 仅构建 Windows x64。推送 `vX.Y.Z` 或 `vX.Y.Z-rc.1` 标签后，全部回归、交叉构建和打包校验成功才创建 GitHub Release；预发布标签标记为 prerelease。手动触发要求裸版本，只保留 Actions 二进制和匹配 commit 的源码附件，不自动发布。
+
+版本按严格 SemVer 校验，暂不接受 `+build`，核心数字不得超过 Windows uint16 上限。共享默认值在 `internal/buildmeta`；标签构建将同一版本传给资源、链接器与打包器。配置 schema 和私有前端包版本不是产品版本来源。
+
+发布前必须先提交包含工作流、GPL 和截图的完整源码，再由维护者自行创建并推送标签。工作流只读构建，只有发布 job 拥有仓库内容写权限；不需要产品 API 密钥。同名 Release 不自动覆盖，标签与构建 commit 不一致则停止。Release 链接对应标签源码归档；未执行 Windows 程序，不把交叉编译写成实机验收通过。
+
+工作流守卫可在带 PyYAML 的隔离环境运行 `tests/release_workflow.py`；测试仅使用本地替身，不会创建真实 Release。托管工作流的实际执行仍需上传仓库后验证。
 
 验证范围和人工用例见[测试矩阵](TEST_MATRIX.md)，用户行为见[使用指南](USER_GUIDE.md)。
