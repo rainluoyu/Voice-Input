@@ -10,6 +10,10 @@ import (
 	"voice_input/internal/i18n"
 )
 
+type Clipboard interface {
+	Copy(string) error
+}
+
 type Injector interface {
 	// Prepare validates text and waits for held modifiers without submitting input.
 	// Commit targets the current active position, not a saved window or control.

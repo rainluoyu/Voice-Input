@@ -6,7 +6,7 @@ import './style.css';
 
 type Stage='idle'|'recording'|'asr'|'llm'|'search'|'injecting'|'done'|'skip'|'clarify'|'error'|'cancelled';
 type Source={title:string;url:string;published_date?:string;highlights:string[]};
-type State={task_id:string;intent:'dictation'|'dialogue';turn:number;question:string;replying:boolean;revision:number;stage:Stage;visible:boolean;raw_text:string;text:string;notice:string;notice_i18n?:Message;pinned:boolean;hide_at:number;mode:string;hotkey:string;level:number;sources:Source[]};
+type State={task_id:string;intent:'dictation'|'dialogue';turn:number;question:string;replying:boolean;revision:number;stage:Stage;visible:boolean;raw_text:string;text:string;notice:string;notice_i18n?:Message;copy_message_i18n?:Message;pinned:boolean;hide_at:number;mode:string;hotkey:string;level:number;sources:Source[]};
 type ResultIdentity={task:string;turn:number;text:string};
 const root=document.querySelector<HTMLDivElement>('#app')!;
 let state:State={task_id:'',intent:'dictation',turn:0,question:'',replying:false,revision:0,stage:'idle',visible:false,raw_text:'',text:'',notice:'',pinned:false,hide_at:0,mode:'live',hotkey:'Ctrl+Alt+R',level:0,sources:[]};
@@ -21,9 +21,7 @@ function popupView(s:State){
 function mountPopup(){
  let locale:Locale=browserLocale();
  root.innerHTML=`<main class="popup" data-view="working" data-stage="idle"><div class="popup-shell">
- <header class="popup-header"><div class="brand"><img class="mark" src="/app-icon.png" width="28" height="28" alt="" aria-hidden="true"><div class="brand-copy"><strong>${APP_NAME}</strong><span class="badge" id="mode-badge"></span></div></div><div class="window-actions">
- <button id="settings" class="icon-button" data-i18n-aria-label="popup.aria.settings" data-i18n-title="popup.button.settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6M15 14v6"/></svg></button>
- <button id="close" class="icon-button" data-i18n-aria-label="popup.aria.close" data-i18n-title="popup.title.close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div></header>
+ <header class="popup-header"><div class="brand"><img class="mark" src="/app-icon.png" width="28" height="28" alt="" aria-hidden="true"><div class="brand-copy"><strong>${APP_NAME}</strong><span class="badge" id="mode-badge"></span></div></div></header>
  <section class="status" aria-live="polite"><div class="status-title"><span id="indicator" class="indicator"></span><h1 id="stage"></h1></div><div id="waveform" class="waveform" hidden><meter id="level" class="level-meter" min="0" max="1" value="0" hidden></meter><div class="wave-bars" aria-hidden="true">${'<span></span>'.repeat(9)}</div></div></section>
  <div id="popup-body" class="popup-body" tabindex="0" data-i18n-aria-label="popup.aria.body">
  <p id="notice" class="notice" role="status" hidden></p>
@@ -32,7 +30,7 @@ function mountPopup(){
  <section id="result-section" class="text-section result-section" hidden><h2 data-i18n="popup.section.result"></h2><p id="result" class="content"></p></section>
  <details id="sources" hidden><summary data-i18n="popup.section.sources"></summary><ul id="source-list"></ul></details>
  </div>
- <p id="bridge-error" class="warning" role="alert" hidden></p><footer id="popup-footer"><div class="footer-meta"><span id="countdown"></span><span id="copy-message" role="status" hidden></span></div><div id="popup-actions" class="popup-actions" hidden><button id="reply" type="button" class="primary reply-button" hidden></button><button id="copy" disabled hidden data-i18n="popup.button.copy"></button></div></footer></div></main>`;
+ <p id="bridge-error" class="warning" role="alert" hidden></p><footer id="popup-footer"><div class="footer-meta"><span id="countdown"></span><span id="copy-message" role="status" hidden></span></div><div id="popup-actions" class="popup-actions"><button id="reply" type="button" class="primary reply-button" hidden></button><div class="popup-commands"><button id="settings" type="button" data-i18n="popup.button.settings" data-i18n-aria-label="popup.aria.settings" data-i18n-title="popup.button.settings"></button><button id="close" type="button" data-i18n="popup.button.close" data-i18n-aria-label="popup.aria.close" data-i18n-title="popup.title.close"></button><button id="copy" type="button" disabled hidden data-i18n="popup.button.copy"></button></div></div></footer></div></main>`;
  const el=<T extends HTMLElement>(id:string)=>root.querySelector<T>(`#${id}`)!;
  const body=el('popup-body');
  const panel=root.querySelector<HTMLElement>('.popup')!;
@@ -75,7 +73,8 @@ function mountPopup(){
   const notice=message(locale,state.notice,state.notice_i18n);if(el('notice').textContent!==notice)el('notice').textContent=notice;el('notice').hidden=!notice;
   const level=el<HTMLMeterElement>('level').value;el('level').setAttribute('aria-label',t(locale,'popup.level',{percent:String(Math.round(level*100))}));
   if(warningCode)el('bridge-error').textContent=t(locale,warningCode);
-  if(copied)el('copy-message').textContent=t(locale,'popup.copy.success');
+  const copyFeedback=copied?t(locale,'popup.copy.success'):state.copy_message_i18n?message(locale,'',state.copy_message_i18n):'';
+  el('copy-message').textContent=copyFeedback;el('copy-message').hidden=!copyFeedback;
   updateCountdown();body.scrollTop=scroll;
  }
  function render(next:State){
@@ -92,7 +91,6 @@ function mountPopup(){
   const reply=el<HTMLButtonElement>('reply');reply.hidden=!questionVisible;reply.disabled=replyPending||!canReply();
   for(const[id,text]of[['raw',state.raw_text],['result',state.text]]as const){el(id).textContent=text||'';el(`${id}-section`).hidden=!text;}
   const copy=el<HTMLButtonElement>('copy');copy.disabled=!state.text&&!state.raw_text;copy.hidden=copy.disabled;
-  el('popup-actions').hidden=copy.hidden&&reply.hidden;
   el('indicator').className=`indicator ${['asr','llm','search','injecting'].includes(state.stage)?'busy':state.stage}`;
   const recording=state.stage==='recording';el('waveform').hidden=!recording;
   const level=Number.isFinite(state.level)?Math.max(0,Math.min(1,state.level*8)):0;

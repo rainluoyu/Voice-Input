@@ -24,7 +24,7 @@ export function mountSettings(root:HTMLElement) {
  root.innerHTML = `<main class="settings">
  <header class="settings-header"><img class="mark" src="/app-icon.png" width="28" height="28" alt="" aria-hidden="true"><h1>${APP_NAME}</h1></header>
  <nav class="settings-tabs" role="tablist" data-i18n-aria-label="settings.ui.tabs" aria-orientation="vertical">
- ${tab('input','settings.ui.tab.input',true)}${tab('models','settings.ui.tab.models')}${tab('prompts','settings.ui.tab.prompts')}${tab('network','settings.ui.tab.network')}
+ ${tab('input','settings.ui.tab.input',true)}${tab('general','settings.ui.tab.general')}${tab('models','settings.ui.tab.models')}${tab('prompts','settings.ui.tab.prompts')}${tab('network','settings.ui.tab.network')}
  </nav>
  <form id="preferences" class="settings-body" novalidate>
  <p class="warning" id="bridge-error" role="alert" hidden></p><p class="warning" id="startup-error" role="alert" hidden></p>
@@ -39,6 +39,15 @@ export function mountSettings(root:HTMLElement) {
  <div class="span-two"><label for="device">${text('settings.ui.microphone')}</label><div class="inline-field"><select id="device"><option value="default" data-i18n="settings.ui.device.default"></option></select><button id="refresh-devices" type="button" data-i18n="settings.ui.refresh_devices"></button></div><small id="device-message" role="status" hidden></small></div>
  </div></section>
  <section class="settings-group"><h2><label for="profile-custom">${text('settings.ui.background')}</label></h2><textarea id="profile-custom" class="background-input" rows="8" aria-describedby="profile-count" data-i18n-placeholder="settings.ui.background.placeholder"></textarea><output id="profile-count" class="character-count" for="profile-custom"></output></section>
+ </section>
+ <section id="panel-general" class="settings-panel" role="tabpanel" aria-labelledby="tab-general" data-settings-panel="general" hidden>
+ <section class="settings-group"><h2>${text('settings.ui.general')}</h2><div class="form-grid">
+ <div class="span-two"><label class="check" for="start-with-windows"><input id="start-with-windows" type="checkbox" aria-describedby="start-with-windows-hint">${text('settings.ui.general.start_with_windows')}</label><small id="start-with-windows-hint" data-i18n="settings.ui.general.start_with_windows.hint"></small></div>
+ <div class="span-two"><label class="check" for="start-as-admin"><input id="start-as-admin" type="checkbox" aria-describedby="start-as-admin-hint" disabled>${text('settings.ui.general.start_as_admin')}</label><small id="start-as-admin-hint" data-i18n="settings.ui.general.start_as_admin.hint"></small></div>
+ <div class="span-two"><label class="check" for="auto-copy"><input id="auto-copy" type="checkbox" aria-describedby="auto-copy-hint">${text('settings.ui.general.auto_copy')}</label><small id="auto-copy-hint" data-i18n="settings.ui.general.auto_copy.hint"></small></div>
+ <div class="span-two"><label class="check" for="mute-while-recording"><input id="mute-while-recording" type="checkbox" aria-describedby="mute-while-recording-hint">${text('settings.ui.general.mute_while_recording')}</label><small id="mute-while-recording-hint" data-i18n="settings.ui.general.mute_while_recording.hint"></small></div>
+ <label class="span-two" for="auto-hide-seconds">${text('settings.ui.general.auto_hide_seconds')}<input id="auto-hide-seconds" type="number" min="1" max="3600" step="1" required aria-describedby="auto-hide-seconds-hint"><small id="auto-hide-seconds-hint" data-i18n="settings.ui.general.auto_hide_seconds.hint"></small></label>
+ </div></section>
  </section>
  <section id="panel-models" class="settings-panel" role="tabpanel" aria-labelledby="tab-models" data-settings-panel="models" hidden>
  <section class="settings-group"><h2>${text('settings.ui.asr')}</h2><div class="form-grid">
@@ -178,7 +187,9 @@ export function mountSettings(root:HTMLElement) {
  el('max-tool-rounds').addEventListener('input',updateBudget);
  function fill(config:Config) {
   baseline=structuredClone(config);baseline.ui_language??='auto';
-  const values:Record<string,string|number> = {'ui-language':baseline.ui_language,'mode':config.mode,'hotkey':config.hotkey,'ai-hotkey':config.ai_hotkey,'max-seconds':config.recording.max_seconds,'asr-provider':config.asr.provider||'openai_compatible','asr-endpoint':config.asr.endpoint,'asr-model':config.asr.model,'asr-language':config.asr.language,'asr-timeout':config.asr.timeout_seconds,'llm-base':config.llm.base_url,'llm-model':config.llm.model,'output-format':config.llm.output_format,'llm-timeout':config.llm.timeout_seconds,'task-timeout':config.llm.task_timeout_seconds,'max-tool-rounds':config.llm.max_tool_rounds??2,'search-type':config.exa.search_type,'max-calls':config.exa.max_calls,'search-timeout':config.exa.timeout_seconds,'profile-custom':config.profile.custom_background};
+  baseline.general={...defaultConfig().general,...config.general};
+  baseline.popup.auto_hide_seconds??=30;
+  const values:Record<string,string|number> = {'auto-hide-seconds':baseline.popup.auto_hide_seconds,'ui-language':baseline.ui_language,'mode':config.mode,'hotkey':config.hotkey,'ai-hotkey':config.ai_hotkey,'max-seconds':config.recording.max_seconds,'asr-provider':config.asr.provider||'openai_compatible','asr-endpoint':config.asr.endpoint,'asr-model':config.asr.model,'asr-language':config.asr.language,'asr-timeout':config.asr.timeout_seconds,'llm-base':config.llm.base_url,'llm-model':config.llm.model,'output-format':config.llm.output_format,'llm-timeout':config.llm.timeout_seconds,'task-timeout':config.llm.task_timeout_seconds,'max-tool-rounds':config.llm.max_tool_rounds??2,'search-type':config.exa.search_type,'max-calls':config.exa.max_calls,'search-timeout':config.exa.timeout_seconds,'profile-custom':config.profile.custom_background};
   for(const kind of promptKinds) {
    const custom=config.llm[`${kind}_prompt`]??'';promptSource(kind,custom.trim()?'custom':'default');
    values[`${kind}-prompt`]=custom.trim()?custom:'';
@@ -189,6 +200,10 @@ export function mountSettings(root:HTMLElement) {
   if(!Array.from(select.options).some(option=>option.value===config.recording.device_id))select.add(deviceOption({id:config.recording.device_id,name:'',name_i18n:{code:'settings.ui.device.saved'}}));
   select.value=config.recording.device_id;
   input('exa-enabled').checked=config.exa.enabled;
+  input('start-with-windows').checked=baseline.general.start_with_windows;
+  input('start-as-admin').checked=baseline.general.start_as_admin;
+  input('auto-copy').checked=baseline.general.auto_copy;
+  input('mute-while-recording').checked=baseline.general.mute_while_recording;
   refreshLanguage();
  }
  function readPrompt(kind:PromptKind) {
@@ -202,6 +217,8 @@ export function mountSettings(root:HTMLElement) {
   c.asr={provider:value('asr-provider') as Config['asr']['provider'],endpoint:value('asr-endpoint').trim(),model:value('asr-model').trim(),language:value('asr-language').trim(),timeout_seconds:Number(value('asr-timeout'))};
   c.llm={base_url:value('llm-base').trim(),model:value('llm-model').trim(),output_format:value('output-format'),timeout_seconds:Number(value('llm-timeout')),task_timeout_seconds:Number(value('task-timeout')),dictation_prompt:readPrompt('dictation'),dialogue_prompt:readPrompt('dialogue'),max_tool_rounds:Number(value('max-tool-rounds'))};
   c.exa={enabled:input('exa-enabled').checked,search_type:value('search-type'),max_calls:Number(value('max-calls')),timeout_seconds:Number(value('search-timeout'))};
+  c.general={start_with_windows:input('start-with-windows').checked,start_as_admin:input('start-with-windows').checked&&input('start-as-admin').checked,auto_copy:input('auto-copy').checked,mute_while_recording:input('mute-while-recording').checked};
+  c.popup.auto_hide_seconds=Number(value('auto-hide-seconds'));
   c.profile={custom_background:value('profile-custom')};
   return c;
  }
@@ -216,6 +233,8 @@ export function mountSettings(root:HTMLElement) {
  function syncControls() {
   el<HTMLFieldSetElement>('settings-fields').disabled=!loaded;
   el<HTMLButtonElement>('save').disabled=!loaded||saving;
+  input('start-as-admin').disabled=!loaded||!input('start-with-windows').checked;
+  if(!input('start-with-windows').checked)input('start-as-admin').checked=false;
   for(const kind of services) {
    const pending=needsSave(kind);
    for(const action of ['save-key','delete-key'])el<HTMLButtonElement>(`${action}-${kind}`).disabled=!loaded||busy.has(kind);

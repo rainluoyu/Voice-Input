@@ -8,6 +8,7 @@ import (
 	"flag"
 	"io/fs"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"voice_input/internal/pipeline"
 	"voice_input/internal/popup"
 	"voice_input/internal/settings"
+	"voice_input/internal/startup"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -29,6 +31,9 @@ import (
 )
 
 func main() {
+	if handled, code := startup.HandleHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	lock, err := instance.Acquire()
 	if errors.Is(err, instance.ErrAlreadyRunning) {
 		return
@@ -79,7 +84,7 @@ func main() {
 	})
 	desktop.app = a
 	statusPopup := popup.New(popup.Actions{
-		Close: controller.Close, Settings: desktop.ShowSettings, Copy: desktop.CopyResult, KeepOpen: controller.KeepOpen, Reply: controller.Reply,
+		Close: controller.Close, Settings: desktop.ShowSettings, Copy: desktop.CopyResult, KeepOpen: controller.KeepOpen, Reply: desktop.ReplyToClarification,
 	})
 	desktop.popup = statusPopup
 	statusPopup.SetLocale(desktop.appliedLocale())
@@ -123,7 +128,15 @@ func main() {
 	})
 	// Re-read on the UI thread so queued updates cannot show an obsolete task.
 	quit := make(chan struct{})
-	a.OnShutdown(func() { close(quit); controller.Close(); statusPopup.Destroy() })
+	a.OnShutdown(func() {
+		close(quit)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := controller.Shutdown(ctx); err != nil {
+			log.Print(i18n.FromError(err, "audio.restore_failed").Text(desktop.appliedLocale()))
+		}
+		statusPopup.Destroy()
+	})
 	go func() {
 		select {
 		case <-started:

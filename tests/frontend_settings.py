@@ -16,6 +16,8 @@ settings_locale = "zh-CN"
 system_locale = "zh-CN"
 hold_test = False
 pending_test = []
+general_defaults = {"start_with_windows": False, "start_as_admin": False, "auto_copy": False, "mute_while_recording": False}
+enabled_general = {key: True for key in general_defaults}
 config = {
     "version": 1, "mode": "live", "hotkey": "Ctrl+Alt+R", "ai_hotkey": "Ctrl+Alt+A",
     "recording": {"device_id": "default", "max_seconds": 120},
@@ -92,6 +94,9 @@ with sync_playwright() as p:
     def tab(name):
         page.locator("#tab-" + name).click()
 
+    def general_draft():
+        return {key: page.locator("#" + key.replace("_", "-")).is_checked() for key in general_defaults}
+
     def save_result(ok=True, http_error=False, saved=False, identity=None):
         global config
         wait_pending(pending_save)
@@ -105,14 +110,67 @@ with sync_playwright() as p:
 
     page.goto("http://wails.localhost/?view=settings", wait_until="domcontentloaded")
     wait_pending(pending_read)
-    for selector in ("#mode", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr", "#refresh-devices", "#save"):
+    for selector in ("#mode", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr", "#refresh-devices", "#save"):
         assert page.locator(selector).is_disabled(), selector
     assert page.locator("#summary").inner_text() == "加载设置…"
     fulfill_read()
     page.wait_for_function('!document.querySelector("#save").disabled')
     assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
+    assert page.locator("#panel-input").is_visible(), "Input remains the default category"
+    assert page.locator("#test-asr").is_enabled(), "legacy defaults must not dirty ASR"
+    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["输入", "通用", "模型服务", "提示词", "联网与预算"]
+    tab("general")
+    assert "general" not in config, "legacy fixtures exercise the default fallback"
+    assert general_draft() == general_defaults
+    assert page.locator("#auto-hide-seconds").input_value() == "77"
+    assert page.locator("#start-as-admin").is_disabled()
+    for field, label in (("start-with-windows", "开机自启"), ("start-as-admin", "以管理员身份自启"), ("auto-copy", "自动复制文本"), ("mute-while-recording", "录音时静音播放"), ("auto-hide-seconds", "自动隐藏等待时间（秒）")):
+        assert page.locator(f'label[for="{field}"] span').inner_text() == label
+        assert page.locator(f"#{field}").get_attribute("aria-describedby") == field + "-hint"
+        assert page.locator(f"#{field}-hint").inner_text()
+    before = sum(method == "SaveSettings" for method, _ in requests)
+    page.locator("#start-with-windows").check()
+    assert page.locator("#start-as-admin").is_enabled()
+    assert not page.locator("#start-as-admin").is_checked()
+    page.locator("#start-as-admin").check()
+    page.locator("#start-with-windows").uncheck()
+    assert page.locator("#start-as-admin").is_disabled()
+    assert not page.locator("#start-as-admin").is_checked()
+    page.locator("#start-with-windows").check()
+    assert not page.locator("#start-as-admin").is_checked(), "re-enabling startup must not restore admin"
+    page.locator("#start-as-admin").check()
+    page.locator("#auto-copy").check()
+    page.locator("#mute-while-recording").check()
+    assert sum(method == "SaveSettings" for method, _ in requests) == before, "General edits remain local drafts"
+    for invalid, validation in (("", "请填写此字段。"), ("0", "请输入 1 到 3600 之间的值。"), ("3601", "请输入 1 到 3600 之间的值。"), ("1.5", "请输入整数。")):
+        page.locator("#auto-hide-seconds").fill(invalid)
+        assert page.locator("#auto-hide-seconds").evaluate("node => node.validationMessage") == validation
+        tab("input")
+        page.locator("#save").click()
+        assert page.locator("#panel-general").is_visible()
+        assert page.locator("#auto-hide-seconds").evaluate("node => node === document.activeElement")
+        assert sum(method == "SaveSettings" for method, _ in requests) == before
+    # Both inclusive boundaries round-trip, preserving unrelated popup properties.
+    for seconds in (1, 3600):
+        page.locator("#auto-hide-seconds").fill(str(seconds))
+        page.locator("#save").click()
+        submitted = save_result()
+        assert submitted["general"] == enabled_general
+        assert submitted["popup"] == {"auto_hide_seconds": seconds, "always_on_top": False}
+        page.reload(wait_until="domcontentloaded")
+        fulfill_read()
+        page.wait_for_function('!document.querySelector("#save").disabled')
+        tab("general")
+        assert general_draft() == enabled_general
+        assert page.locator("#start-as-admin").is_enabled()
+        assert page.locator("#auto-hide-seconds").input_value() == str(seconds)
+    page.locator("#auto-hide-seconds").fill("88")
     tab("models")
     assert page.locator("#test-asr").is_enabled()
+    assert page.locator("#test-llm").is_enabled(), "General and popup settings do not dirty service probes"
+    tab("network")
+    assert page.locator("#test-exa").is_enabled()
+    tab("models")
     assert page.locator("#test-llm").is_enabled()
     page.locator("#asr-endpoint").fill("https://other.example/v1/audio/transcriptions")
     assert page.locator("#test-asr").is_disabled()
@@ -173,19 +231,34 @@ with sync_playwright() as p:
     submitted = save_result()
     assert submitted["llm"]["dictation_prompt"] == "" and submitted["llm"]["dialogue_prompt"] == ""
     assert submitted["llm"]["max_tool_rounds"] == 0 and submitted["exa"]["max_calls"] == 8
-    assert submitted["popup"] == {"auto_hide_seconds": 77, "always_on_top": False}
+    assert submitted["popup"] == {"auto_hide_seconds": 88, "always_on_top": False}
+    assert submitted["general"] == enabled_general
     assert submitted["privacy"] == {"save_history": True, "log_text": True}
     assert submitted["profile"]["custom_background"] == "独立背景😀\n未保存修改"
 
     # Successful save advances only the submitted snapshot, not newer draft edits.
+    tab("general")
+    page.locator("#start-with-windows").uncheck()
+    page.locator("#auto-copy").uncheck()
+    page.locator("#mute-while-recording").uncheck()
+    page.locator("#auto-hide-seconds").fill("100")
+    tab("models")
     page.locator("#llm-model").fill("submitted")
     page.locator("#save").click()
     wait_pending(pending_save)
     assert page.locator("#save").is_disabled()
     assert page.locator("#llm-model").is_enabled()
+    tab("general")
+    for field in ("start-with-windows", "start-as-admin", "auto-copy", "mute-while-recording"):
+        assert page.locator("#" + field).is_enabled(), "draft controls remain editable during save"
+        page.locator("#" + field).check()
+    page.locator("#auto-hide-seconds").fill("101")
+    tab("models")
     page.locator("#llm-model").fill("newer-draft")
     submitted = save_result()
     assert submitted["llm"]["model"] == "submitted"
+    assert submitted["general"] == general_defaults and submitted["popup"]["auto_hide_seconds"] == 100
+    assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "101"
     assert page.locator("#llm-model").input_value() == "newer-draft"
     assert page.locator("#test-llm").is_disabled()
     page.locator("#llm-model").fill("submitted")
@@ -196,6 +269,8 @@ with sync_playwright() as p:
         page.locator("#llm-model").fill("failed-draft")
         page.locator("#save").click()
         save_result(False, http_error=http_error)
+        assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "101"
+        assert config["general"] == general_defaults and config["popup"]["auto_hide_seconds"] == 100
         assert page.locator("#llm-model").input_value() == "failed-draft"
         assert page.locator("#test-llm").is_disabled()
         page.locator("#llm-model").fill("submitted")
@@ -268,12 +343,20 @@ with sync_playwright() as p:
         assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
 
     translated("en")
+    tab("general")
+    for field, label in (("start-with-windows", "Start with Windows"), ("start-as-admin", "Start as administrator"), ("auto-copy", "Automatically copy text"), ("mute-while-recording", "Mute playback while recording"), ("auto-hide-seconds", "Auto-hide delay (seconds)")):
+        assert page.locator(f'label[for="{field}"] span').inner_text() == label
+    page.locator("#auto-hide-seconds").fill("1.5")
+    assert page.locator("#auto-hide-seconds").evaluate("node => node.validationMessage") == "Please enter a whole number."
     assert page.locator("#bridge-error").inner_text() == "Windows credentials are unavailable; check your user session and Credential Manager"
     assert "unsafe credential detail" not in page.locator("body").inner_text()
     assert page.locator("#dictation-prompt").input_value() == defaults_by_locale["en"]["dictation"]
     assert page.locator("#dialogue-prompt").get_attribute("data-prompt-source") == "custom"
     language("auto")
     translated("zh-CN")
+    assert page.locator("#auto-hide-seconds").evaluate("node => node.validationMessage") == "请输入整数。"
+    page.locator("#auto-hide-seconds").fill("101")
+    assert general_draft() == enabled_general
     assert page.locator("#dictation-prompt").input_value() == defaults["dictation"]
     assert page.locator("#dialogue-prompt").input_value() == defaults_by_locale["en"]["dialogue"], "custom equal to another locale's default is still custom"
     page.locator("#save").click()
@@ -313,15 +396,28 @@ with sync_playwright() as p:
     language("zh-CN")
     assert page.locator("#dialogue-prompt").input_value() == defaults["dialogue"]
     language("en")
+    tab("general")
+    page.locator("#start-with-windows").uncheck()
+    page.locator("#auto-copy").uncheck()
+    page.locator("#mute-while-recording").uncheck()
+    page.locator("#auto-hide-seconds").fill("202")
     tab("models")
     page.locator("#llm-model").fill("snapshot-en")
     page.locator("#save").click()
     wait_pending(pending_save)
     language("auto")
+    tab("general")
+    for field in ("start-with-windows", "start-as-admin", "auto-copy", "mute-while-recording"):
+        page.locator("#" + field).check()
+    page.locator("#auto-hide-seconds").fill("203")
+    tab("models")
     page.locator("#llm-model").fill("newer-zh-draft")
     page.locator("#key-llm").fill("newer-unsaved-key")
     submitted = save_result(False, saved=True, identity={"code": "popup.feedback.saved"})
     assert submitted["ui_language"] == "en" and submitted["llm"]["model"] == "snapshot-en"
+    assert submitted["general"] == general_defaults and submitted["popup"]["auto_hide_seconds"] == 202
+    assert config["general"] == general_defaults and config["popup"]["auto_hide_seconds"] == 202
+    assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "203"
     assert submitted["llm"]["dictation_prompt"] == "" and submitted["llm"]["dialogue_prompt"] == ""
     assert page.locator("#ui-language").input_value() == "auto"
     assert page.locator("html").get_attribute("lang") == "zh-CN"
@@ -413,7 +509,7 @@ with sync_playwright() as p:
         large_text = page.add_style_tag(content="body *{font-size:20px!important}") if large else None
         for width, height in ((760, 800), (520, 500), (360, 800)):
             page.set_viewport_size({"width": width, "height": height})
-            for group in ("input", "models", "prompts", "network"):
+            for group in ("input", "general", "models", "prompts", "network"):
                 tab(group)
                 for purpose in (("dictation", "dialogue") if group == "prompts" else (None,)):
                     if purpose:
@@ -432,15 +528,30 @@ with sync_playwright() as p:
         if large_text:
             large_text.evaluate("node => node.remove()")
 
+    # Old configs may omit the new group and delay; defaults must not replace popup siblings.
+    config.pop("general")
+    config["popup"].pop("auto_hide_seconds")
+    page.reload(wait_until="domcontentloaded")
+    fulfill_read()
+    page.wait_for_function('!document.querySelector("#save").disabled')
+    tab("general")
+    assert general_draft() == general_defaults
+    assert page.locator("#start-as-admin").is_disabled()
+    assert page.locator("#auto-hide-seconds").input_value() == "30"
+    page.locator("#save").click()
+    submitted = save_result()
+    assert submitted["general"] == general_defaults
+    assert submitted["popup"] == {"auto_hide_seconds": 30, "always_on_top": False}
+
     page.reload(wait_until="domcontentloaded")
     fulfill_read(False)
     page.wait_for_function('document.querySelector("#bridge-error").textContent.includes("禁用保存")')
     before = sum(method == "SaveSettings" for method, _ in requests)
-    for selector in ("#save", "#mode", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr"):
+    for selector in ("#save", "#mode", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr"):
         assert page.locator(selector).is_disabled(), selector
     page.locator("#preferences").evaluate("form => form.requestSubmit()")
     page.wait_for_timeout(50)
     assert sum(method == "SaveSettings" for method, _ in requests) == before
     assert not errors, errors
     browser.close()
-print("PASS: bilingual settings/feedback and system-resolved auto; explicit default/custom prompt sources; DOM/focus/selection/IME/scroll/key retention; pending save/test/key and failures preserve drafts; saved=true/ok=false snapshot baseline; dirty guards, typed/legacy messages, devices/XSS and existing viewport/validation regressions")
+print("PASS: General defaults/round-trip, startup/admin dependency, 1..3600 integer validation and bilingual labels/hints; popup siblings preserved; bilingual settings/feedback and system-resolved auto; explicit default/custom prompt sources; DOM/focus/selection/IME/scroll/key retention; pending save/test/key and failures preserve drafts; saved=true/ok=false snapshot baseline; dirty guards, typed/legacy messages, devices/XSS and existing viewport/validation regressions")

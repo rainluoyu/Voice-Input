@@ -86,7 +86,11 @@ func popupLayout(s app.State, dpi int32, client rect) layout {
 	l.Inner = rect{client.Left + edge, client.Top + edge, client.Right - edge, client.Bottom - edge}
 	inner := l.Inner
 	headerHeight := min(u(96), inner.height()/2)
-	footerHeight := min(u(60), inner.height()/3)
+	footerHeight := u(60)
+	if s.Question != "" {
+		footerHeight += u(38)
+	}
+	footerHeight = min(footerHeight, inner.height()/3)
 	l.Header = rect{inner.Left, inner.Top, inner.Right, inner.Top + headerHeight}
 	l.Footer = rect{inner.Left, inner.Bottom - footerHeight, inner.Right, inner.Bottom}
 	l.Body = rect{inner.Left + u(14), l.Header.Bottom + u(8), inner.Right - u(14), l.Footer.Top - u(8)}.fit(inner)
@@ -97,10 +101,8 @@ func popupLayout(s app.State, dpi int32, client rect) layout {
 		return rect{x, y, x + max(0, width), y + max(0, height)}.fit(bounds)
 	}
 	left, right, top := inner.Left+u(14), inner.Right-u(14), inner.Top
-	l.Close = box(right-u(28), top+u(12), u(28), u(30), l.Header)
-	l.Settings = box(l.Close.Left-u(96), top+u(12), u(88), u(30), l.Header)
 	l.Icon = box(left, top+u(14), u(28), u(28), l.Header)
-	l.Brand = box(left+u(40), top+u(10), l.Settings.Left-u(8)-left-u(40), u(22), l.Header)
+	l.Brand = box(left+u(40), top+u(10), right-left-u(40), u(22), l.Header)
 	l.Purpose = box(l.Brand.Left, top+u(32), l.Brand.width(), u(18), l.Header)
 	l.Stage = box(left, top+u(54), right-left, u(26), l.Header)
 	if s.Stage == app.Recording {
@@ -112,15 +114,28 @@ func popupLayout(s app.State, dpi int32, client rect) layout {
 	l.Feedback = box(max(left, right-u(100)), l.Footer.Top+u(2), min(u(100), right-left), u(18), l.Footer)
 	buttonsTop := l.Footer.Bottom - u(34)
 	buttonsRight := right
-	if s.Text != "" || s.RawText != "" {
-		l.Copy = box(max(left, right-u(76)), buttonsTop, min(u(76), right-left), u(30), l.Footer)
-		buttonsRight = l.Copy.Left - u(8)
+	footerButton := func(width int32) rect {
+		r := box(max(left, buttonsRight-u(width)), buttonsTop, min(u(width), max(0, buttonsRight-left)), u(30), l.Footer)
+		buttonsRight = r.Left - u(8)
+		return r
 	}
+	if s.Text != "" || s.RawText != "" {
+		l.Copy = footerButton(76)
+	}
+	l.Close = footerButton(68)
+	l.Settings = footerButton(88)
 	if s.Question != "" {
-		l.Reply = box(left, buttonsTop, min(u(160), max(0, buttonsRight-left)), u(30), l.Footer)
+		l.Reply = box(left, buttonsTop-u(38), min(u(160), max(0, right-left)), u(30), l.Footer)
 	} else {
 		l.Hint = box(left, buttonsTop+u(6), max(0, buttonsRight-left), u(20), l.Footer)
 	}
+	metaBottom := max(l.Footer.Top, buttonsTop)
+	if s.Question != "" {
+		metaBottom = max(l.Footer.Top, buttonsTop-u(38))
+	}
+	meta := rect{l.Footer.Left, l.Footer.Top, l.Footer.Right, metaBottom}.fit(l.Footer)
+	l.FooterStatus = l.FooterStatus.fit(meta)
+	l.Feedback = l.Feedback.fit(meta)
 	return l
 }
 

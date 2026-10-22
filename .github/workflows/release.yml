@@ -149,7 +149,7 @@ jobs:
           go vet ./...
           mkdir -p bin
           go build -trimpath -ldflags="-H=windowsgui -X=voice_input/internal/buildmeta.Version=$VERSION" -o bin/voice_input.exe ./cmd/voice_input
-          for package in wininput audio settings app popup instance; do
+          for package in wininput audio settings app popup instance startup; do
             go test -c -o "bin/$package.test.exe" "./internal/$package"
           done
           printf 'Windows x64 binaries compiled, not executed.\n'

@@ -76,7 +76,7 @@ with sync_playwright() as p:
                 assert grids.first.evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length") == 1
 
     def capture_categories(label):
-        for group in ("input", "models", "prompts", "network"):
+        for group in ("input", "general", "models", "prompts", "network"):
             tab(group)
             purposes = ("dictation", "dialogue") if group == "prompts" else (None,)
             for purpose in purposes:
@@ -104,7 +104,7 @@ with sync_playwright() as p:
     shared_icon()
     assert page.title() == "voice input"
     assert page.locator("h1").inner_text() == "voice input"
-    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["输入", "模型服务", "提示词", "联网与预算"]
+    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["输入", "通用", "模型服务", "提示词", "联网与预算"]
     assert page.locator("#mode").input_value() == "live"
     assert page.locator("#mode option").count() == 2
     assert page.locator("#mode option[value=mock]").count() == 0
@@ -136,8 +136,12 @@ with sync_playwright() as p:
     page.keyboard.press("ArrowRight")
     assert page.locator("#tab-input").evaluate("node => node === document.activeElement")
     page.keyboard.press("ArrowDown")
-    assert page.locator("#tab-models").evaluate("node => node === document.activeElement")
+    assert page.locator("#tab-general").evaluate("node => node === document.activeElement")
+    assert page.locator("#panel-general").is_visible()
+    page.keyboard.press("ArrowDown")
     assert page.locator("#panel-models").is_visible()
+    page.keyboard.press("ArrowUp")
+    assert page.locator("#panel-general").is_visible()
     page.keyboard.press("ArrowUp")
     assert page.locator("#panel-input").is_visible()
     page.keyboard.press("End")
@@ -157,7 +161,11 @@ with sync_playwright() as p:
     page.keyboard.press("ArrowDown")
     assert page.locator("#tab-input").evaluate("node => node === document.activeElement")
     page.keyboard.press("ArrowRight")
-    assert page.locator("#tab-models").evaluate("node => node === document.activeElement")
+    assert page.locator("#tab-general").evaluate("node => node === document.activeElement")
+    page.keyboard.press("ArrowRight")
+    assert page.locator("#panel-models").is_visible()
+    page.keyboard.press("ArrowLeft")
+    assert page.locator("#panel-general").is_visible()
     page.keyboard.press("ArrowLeft")
     assert page.locator("#panel-input").is_visible()
     page.keyboard.press("End")
@@ -295,7 +303,7 @@ with sync_playwright() as p:
     # English chrome uses the same nodes, navigation, form scroll and command bar.
     page.locator("#ui-language").evaluate("node => { node.value='en'; node.dispatchEvent(new Event('change',{bubbles:true})); }")
     assert page.locator("html").get_attribute("lang") == "en"
-    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["Input", "Model services", "Prompts", "Search & budgets"]
+    assert page.locator(".settings-tabs [role=tab]").all_text_contents() == ["Input", "General", "Model services", "Prompts", "Search & budgets"]
     assert page.locator("#bridge-error").inner_text() == "Read-only preview"
     assert page.locator("#save").inner_text() == "Save settings"
     assert page.locator("#settings-close").inner_text() == "Close settings"
@@ -337,6 +345,11 @@ with sync_playwright() as p:
     assert page.locator("#target").count() == 0
     assert page.locator("#bridge-error").inner_text() == "只读预览"
     assert page.locator("#popup-body").get_attribute("tabindex") == "0"
+    for selector, label in (("#settings", "设置"), ("#close", "关闭")):
+        assert page.locator("#popup-footer " + selector).count() == 1
+        assert page.locator(selector).is_visible() and page.locator(selector).is_enabled()
+        assert page.locator(selector).inner_text() == label
+    assert page.locator(".popup-header button").count() == 0
     assert page.locator("#popup-footer #copy").count() == 1
     page.locator("#settings").click()
     assert page.locator("#bridge-error").inner_text() == "只读预览"
@@ -366,6 +379,8 @@ with sync_playwright() as p:
     assert page.locator("#stage").inner_text() == "Ready"
     assert page.locator("#bridge-error").inner_text() == "Read-only preview"
     assert page.locator("#settings").get_attribute("aria-label") == "Open settings"
+    assert page.locator("#settings").inner_text() == "Settings"
+    assert page.locator("#close").inner_text() == "Close"
     assert page.locator("#countdown").inner_text() == "Polish Ctrl+Alt+R / AI Ctrl+Alt+A"
     page.locator("#settings").click()
     assert page.locator("#bridge-error").inner_text() == "Read-only preview"

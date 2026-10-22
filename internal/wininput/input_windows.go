@@ -20,6 +20,8 @@ var getAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 
 type Native struct{}
 
+func (Native) Copy(text string) error { return w32.SetClipboardText(text) }
+
 // ForegroundWindow is used only to choose a monitor for popup placement.
 // Its value never gates processing or determines where text is submitted.
 func ForegroundWindow() uintptr {

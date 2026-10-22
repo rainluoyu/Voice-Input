@@ -412,8 +412,6 @@ func (w *Window) draw(dc uintptr, l layout) {
 	}
 	text(dc, w.bodyFont, foreground, branding.Name, l.Brand, 0x0020|0x0004)
 	text(dc, w.smallFont, muted, purposeLabelForLocale(w.state, w.locale), l.Purpose, 0x0020|0x0004)
-	w.button(dc, l.Settings, w.label("popup.button.settings"), "settings", true, false)
-	w.button(dc, l.Close, w.label("popup.button.close"), "close", true, false)
 	text(dc, w.titleFont, foreground, stageLabelForLocale(w.state, w.locale), l.Stage, 0x0020|0x0004)
 	if w.state.Stage == app.Recording {
 		bars := meterBars(w.state.Level)
@@ -435,7 +433,11 @@ func (w *Window) draw(dc uintptr, l layout) {
 	fill(dc, rect{l.Body.Left, l.Footer.Top, l.Body.Right, l.Footer.Top + max(1, w.unit(1))}, line)
 	w.lastFooter = footerForLocale(w.state, time.Now(), w.locale)
 	text(dc, w.smallFont, muted, w.lastFooter, l.FooterStatus, 0x0020|0x0004)
-	text(dc, w.smallFont, muted, w.label(w.copyNotice), l.Feedback, 0x0020|0x0002|0x0004)
+	copyFeedback := w.label(w.copyNotice)
+	if copyFeedback == "" && w.state.CopyMessage != nil {
+		copyFeedback = w.state.CopyMessage.Text(w.locale)
+	}
+	text(dc, w.smallFont, muted, copyFeedback, l.Feedback, 0x0020|0x0002|0x0004)
 	if w.maxScroll > 0 {
 		text(dc, w.smallFont, muted, w.label("popup.scroll_hint"), l.Hint, 0x0020|0x0004)
 	}
@@ -449,6 +451,8 @@ func (w *Window) draw(dc uintptr, l layout) {
 		}
 		w.button(dc, l.Reply, w.label(code), action, action != "", true)
 	}
+	w.button(dc, l.Settings, w.label("popup.button.settings"), "settings", true, true)
+	w.button(dc, l.Close, w.label("popup.button.close"), "close", true, true)
 	if l.Copy.width() > 0 {
 		w.button(dc, l.Copy, w.label("popup.button.copy"), "copy", true, true)
 	}

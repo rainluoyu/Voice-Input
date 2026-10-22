@@ -43,6 +43,7 @@ type State struct {
 	Text          string        `json:"text"`
 	Notice        string        `json:"notice"`
 	NoticeMessage *i18n.Message `json:"notice_i18n,omitempty"`
+	CopyMessage   *i18n.Message `json:"copy_message_i18n,omitempty"`
 	HideAt        int64         `json:"hide_at"`
 	Pinned        bool          `json:"pinned"`
 	Mode          string        `json:"mode"`
@@ -68,6 +69,8 @@ type TaskOptions struct {
 	Hotkey      string
 	RecordLimit time.Duration
 	Timeout     time.Duration
+	AutoHide    time.Duration
+	AutoCopy    bool
 }
 type Factory func(context.Context, string, Intent, func(Stage, float64)) (Processor, TaskOptions, error)
 type Controller struct {
@@ -78,6 +81,8 @@ type Controller struct {
 	ready            chan struct{}
 	options          TaskOptions
 	injector         wininput.Injector
+	clipboard        wininput.Clipboard
+	lastCopied       string
 	cancel           context.CancelFunc
 	ctx              context.Context
 	timer            *time.Timer
@@ -95,7 +100,8 @@ func New(processor Processor, injector wininput.Injector, autoHide time.Duration
 	}, injector, autoHide)
 }
 func NewWithFactory(factory Factory, injector wininput.Injector, autoHide time.Duration) *Controller {
-	return &Controller{factory: factory, injector: injector, autoHide: autoHide, hotkey: "Ctrl+Alt+R", aiHotkey: "Ctrl+Alt+A", state: State{Stage: Idle, Intent: Dictation, Mode: "live", Hotkey: "Ctrl+Alt+R", Sources: []search.Hit{}}, changes: make(chan State, 1)}
+	clipboard, _ := injector.(wininput.Clipboard)
+	return &Controller{factory: factory, injector: injector, clipboard: clipboard, autoHide: autoHide, hotkey: "Ctrl+Alt+R", aiHotkey: "Ctrl+Alt+A", state: State{Stage: Idle, Intent: Dictation, Mode: "live", Hotkey: "Ctrl+Alt+R", Sources: []search.Hit{}}, changes: make(chan State, 1)}
 }
 func (c *Controller) Changes() <-chan State { return c.changes }
 func (c *Controller) Snapshot() State       { c.mu.Lock(); defer c.mu.Unlock(); return c.state }
@@ -199,6 +205,7 @@ func (c *Controller) startTurn(replying bool) {
 	}
 	c.processor = nil
 	c.options = TaskOptions{}
+	c.lastCopied, c.state.CopyMessage = "", nil
 	c.ready = make(chan struct{})
 	ready := c.ready
 	id, ctx, turn := c.state.TaskID, c.ctx, c.state.Turn
@@ -334,8 +341,12 @@ func (c *Controller) terminal(stage Stage, notice string, messages ...i18n.Messa
 	}
 	if !c.state.Pinned {
 		id, turn := c.state.TaskID, c.state.Turn
-		c.state.HideAt = time.Now().Add(c.autoHide).UnixMilli()
-		c.timer = time.AfterFunc(c.autoHide, func() {
+		hideAfter := c.options.AutoHide
+		if hideAfter <= 0 {
+			hideAfter = c.autoHide
+		}
+		c.state.HideAt = time.Now().Add(hideAfter).UnixMilli()
+		c.timer = time.AfterFunc(hideAfter, func() {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.state.TaskID != id || c.state.Turn != turn || active(c.state.Stage) || c.state.Pinned {
@@ -421,6 +432,7 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		c.mu.Unlock()
 		return
 	}
+	c.autoCopy(raw)
 	conversation := c.conversation.Clone()
 	if c.state.Replying {
 		if strings.TrimSpace(raw) == "" || len(raw) > 32000 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
@@ -483,6 +495,7 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		}
 		c.awaitReply(result.Notice, "")
 	case "insert":
+		c.autoCopy(result.Text)
 		normalized, normalizeErr := wininput.Normalize(result.Text)
 		if normalizeErr != nil {
 			c.terminalMessage(Error, i18n.FromError(normalizeErr, "app.input_failed"))
@@ -511,6 +524,21 @@ func (c *Controller) process(ctx context.Context, id string, ready <-chan struct
 		c.terminal(Done, "")
 	}
 }
+
+// autoCopy runs only while the current task/turn is valid and its state is locked.
+// The native writer must not synchronously invoke UI work under this lock.
+func (c *Controller) autoCopy(text string) {
+	if !c.options.AutoCopy || text == c.lastCopied || strings.TrimSpace(text) == "" || len(text) > 32000 || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return
+	}
+	message := i18n.M("popup.copy.failed")
+	if c.clipboard != nil && c.clipboard.Copy(text) == nil {
+		c.lastCopied = text
+		message = i18n.M("popup.copy.success")
+	}
+	c.state.CopyMessage = &message
+}
+
 func validate(r Result) error {
 	if strings.ContainsRune(r.Text, 0) || strings.ContainsRune(r.Notice, 0) || !utf8.ValidString(r.Text) || !utf8.ValidString(r.Notice) || len(r.Text) > 32000 || len(r.Notice) > 2000 {
 		return errors.New("result too long")
@@ -554,6 +582,29 @@ func (c *Controller) Close() {
 	c.state.Question, c.state.Replying = "", false
 	c.conversation = Conversation{}
 	c.publish()
+}
+
+// Shutdown waits for recording cleanup before the process exits. Close alone
+// remains non-blocking so dismissing the popup never waits for a device driver.
+func (c *Controller) Shutdown(ctx context.Context) error {
+	c.Close()
+	c.mu.Lock()
+	processor, ready := c.processor, c.ready
+	c.mu.Unlock()
+	if processor == nil {
+		return nil
+	}
+	if ready != nil {
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if recorder, ok := processor.(interface{ StopRecording(context.Context) error }); ok {
+		return recorder.StopRecording(ctx)
+	}
+	return nil
 }
 
 // Presentation changes idle labels only; active task options remain immutable.

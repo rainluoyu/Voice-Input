@@ -70,6 +70,11 @@ func TestPlacementAndLayoutAcrossDPIAndWorkAreas(t *testing.T) {
 				}
 				actions := []rect{l.Settings, l.Close, l.Reply, l.Copy}
 				for i, a := range actions {
+					for _, meta := range []rect{l.FooterStatus, l.Feedback, l.Hint} {
+						if overlaps(a, meta) {
+							t.Fatalf("button overlaps footer text dpi=%d work=%+v: %+v %+v", dpi, work, a, meta)
+						}
+					}
 					for _, b := range actions[i+1:] {
 						if overlaps(a, b) {
 							t.Fatalf("buttons overlap dpi=%d work=%+v: %+v %+v", dpi, work, a, b)
@@ -113,6 +118,41 @@ func TestLayoutActionsUseDrawnRects(t *testing.T) {
 		}
 		if (l.Reply.width() > 0) != (s.Question != "") {
 			t.Fatal("question action not retained in footer", s)
+		}
+	}
+}
+
+func TestFooterGroupsSettingsCloseAndCopy(t *testing.T) {
+	for _, dpi := range []int32{96, 120, 144, 192, 240} {
+		for _, s := range []app.State{
+			{Stage: app.Idle},
+			{Stage: app.Recording},
+			{Stage: app.LLM, RawText: "处理中原文"},
+			{Stage: app.Done, Text: "结果"},
+			{Stage: app.Error},
+			{Intent: app.Dialogue, Stage: app.Clarify, Question: "日期？", RawText: "原文"},
+			{Intent: app.Dialogue, Stage: app.Recording, Question: "日期？", Replying: true},
+		} {
+			l := popupLayout(s, dpi, rect{0, 0, scale(400, dpi), scale(displayClass(s).height(), dpi)})
+			for _, r := range []rect{l.Settings, l.Close} {
+				if r.width() == 0 || r.height() != scale(30, dpi) || r.fit(l.Footer) != r {
+					t.Fatalf("stage=%s: persistent action outside footer: %+v", s.Stage, r)
+				}
+			}
+			if l.Settings.Right+scale(8, dpi) != l.Close.Left || l.Settings.Top != l.Close.Top || l.Close.width() < scale(64, dpi) {
+				t.Fatalf("stage=%s: Settings and Close must share a text-button row: %+v", s.Stage, l)
+			}
+			if l.Copy.width() > 0 && (l.Close.Right+scale(8, dpi) != l.Copy.Left || l.Close.Top != l.Copy.Top) {
+				t.Fatalf("stage=%s: Close must be immediately left of Copy: %+v", s.Stage, l)
+			}
+			if l.Reply.width() > 0 && (l.Reply.Bottom+scale(8, dpi) != l.Settings.Top || l.Reply.fit(l.Footer) != l.Reply) {
+				t.Fatalf("stage=%s: reply must use the footer row above persistent actions: %+v", s.Stage, l)
+			}
+		}
+	}
+	for locale, want := range map[i18n.Locale]string{i18n.EN: "Close", i18n.ZhCN: "关闭"} {
+		if got := i18n.M("popup.button.close").Text(locale); got != want {
+			t.Fatalf("locale=%s: close label=%q want=%q", locale, got, want)
 		}
 	}
 }

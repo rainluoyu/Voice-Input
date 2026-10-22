@@ -144,6 +144,29 @@ func activate(d *wca.IMMDevice) (*wca.IAudioClient, error) {
 	}
 	return client, nil
 }
+func playbackVolume(e *wca.IMMDeviceEnumerator) (*wca.IAudioEndpointVolume, error) {
+	var device *wca.IMMDevice
+	if e.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &device) != nil || device == nil {
+		return nil, i18n.Error("audio.mute_failed")
+	}
+	defer device.Release()
+	var volume *wca.IAudioEndpointVolume
+	// As with IAudioClient, bypass go-wca v0.3.0's Activate context ABI bug.
+	hr, _, _ := syscall.SyscallN(device.VTable().Activate, uintptr(unsafe.Pointer(device)), uintptr(unsafe.Pointer(wca.IID_IAudioEndpointVolume)), ole.CLSCTX_INPROC_SERVER, 0, uintptr(unsafe.Pointer(&volume)))
+	if int32(hr) < 0 || volume == nil {
+		return nil, i18n.Error("audio.mute_failed")
+	}
+	return volume, nil
+}
+func endpointMute(volume *wca.IAudioEndpointVolume) (bool, error) {
+	// Win32 BOOL is 32 bits; go-wca's GetMute(*bool) would overwrite Go memory.
+	var muted uint32
+	hr, _, _ := syscall.SyscallN(volume.VTable().GetMute, uintptr(unsafe.Pointer(volume)), uintptr(unsafe.Pointer(&muted)))
+	if int32(hr) < 0 {
+		return false, i18n.Error("audio.mute_failed")
+	}
+	return muted != 0, nil
+}
 func mixFormat(format *wca.WAVEFORMATEX) (Format, error) {
 	size := 18
 	if format.WFormatTag == 0xfffe {
@@ -155,21 +178,9 @@ func mixFormat(format *wca.WAVEFORMATEX) (Format, error) {
 	return ParseMixFormat(unsafe.Slice((*byte)(unsafe.Pointer(format)), size))
 }
 func (n *Native) Start(ctx context.Context, id string, maxSeconds int, level func(float64)) error {
-	ready := make(chan error, 1)
-	go func() {
-		data, err := n.capture(ctx, id, maxSeconds, level, ready)
-		n.finish(data, err)
-	}()
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return ErrUnavailable
-	case err := <-ready:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return n.start(ctx, 10*time.Second, func(captureCtx context.Context, ready chan<- error) (Data, error) {
+		return n.capture(captureCtx, id, maxSeconds, level, ready)
+	})
 }
 func (n *Native) capture(ctx context.Context, id string, maxSeconds int, level func(float64), ready chan<- error) (data Data, err error) {
 	if !captureMu.TryLock() {
@@ -185,6 +196,9 @@ func (n *Native) capture(ctx context.Context, id string, maxSeconds int, level f
 			ready <- err
 		}
 	}()
+	if err = ctx.Err(); err != nil {
+		return
+	}
 	if err = apartment(); err != nil {
 		return
 	}
@@ -221,6 +235,27 @@ func (n *Native) capture(ctx context.Context, id string, maxSeconds int, level f
 		return Data{}, ErrUnavailable
 	}
 	defer capture.Release()
+	if ctx.Err() != nil {
+		return Data{}, ctx.Err()
+	}
+	if n.mutePlayback {
+		volume, volumeErr := playbackVolume(e)
+		if volumeErr != nil {
+			return Data{}, volumeErr
+		}
+		defer volume.Release()
+		var mute muteState
+		defer func() {
+			if restoreErr := mute.restore(); restoreErr != nil {
+				data, err = Data{}, restoreErr
+			}
+		}()
+		if err = mute.mute(func() (bool, error) { return endpointMute(volume) }, func(muted bool) error {
+			return volume.SetMute(muted, nil)
+		}); err != nil {
+			return Data{}, err
+		}
+	}
 	if ctx.Err() != nil {
 		return Data{}, ctx.Err()
 	}

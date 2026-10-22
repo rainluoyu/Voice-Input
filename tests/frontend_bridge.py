@@ -210,11 +210,25 @@ with sync_playwright() as p:
         }""", arg={"view": view, "height": height})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight")
         for selector in ("#settings", "#close", "#copy", "#reply"):
+            assert page.locator("#popup-footer " + selector).count() == 1, selector
             if page.locator(selector).is_visible():
                 box = page.locator(selector).bounding_box()
-                assert box and box["y"] >= 0 and box["y"] + box["height"] <= page.viewport_size["height"], selector
+                assert box and box["x"] >= 0 and box["x"] + box["width"] <= page.viewport_size["width"], selector
+                assert box["y"] >= 0 and box["y"] + box["height"] <= page.viewport_size["height"], (selector, box, page.viewport_size)
+        assert page.locator(".popup-header button").count() == 0
+        assert page.locator("#settings").is_visible() and page.locator("#close").is_visible()
+        commands = [page.locator(selector).bounding_box() for selector in ("#settings", "#close", "#copy") if page.locator(selector).is_visible()]
+        for left, right in zip(commands, commands[1:]):
+            assert abs(left["y"] - right["y"]) <= 1 and abs(left["height"] - right["height"]) <= 1
+            assert abs(right["x"] - left["x"] - left["width"] - 8) <= 1
+        if page.locator("#reply").is_visible():
+            reply = page.locator("#reply").bounding_box()
+            assert reply["y"] + reply["height"] + 8 <= commands[0]["y"] + 1
 
     presentation("working", 240)
+    page.locator("#settings").click()
+    page.wait_for_timeout(100)
+    assert any(method == "ShowSettings" for method, _ in requests)
     assert page.locator("#raw-section, #result-section, #copy").evaluate_all("nodes => nodes.every(node => node.hidden)")
     malicious = "<img src=x onerror=window.__pwned=true>原文"
     update = {**state, "intent": "dialogue", "hotkey": "Ctrl+Shift+A", "revision": 2, "mode": "live", "stage": "clarify", "visible": True, "raw_text": malicious,
@@ -509,6 +523,8 @@ with sync_playwright() as p:
     assert page.locator("#stage").inner_text() == "Text entered"
     assert page.locator("#raw-label").inner_text() == "ASR transcript"
     assert page.locator("#copy").inner_text() == "Copy"
+    assert page.locator("#settings").inner_text() == "Settings"
+    assert page.locator("#close").inner_text() == "Close"
     assert page.locator("#settings").get_attribute("aria-label") == "Open settings"
     assert page.locator("#settings").get_attribute("title") == "Settings"
     assert page.locator("#close").get_attribute("aria-label") == "Close popup and cancel task"
@@ -595,6 +611,22 @@ with sync_playwright() as p:
                 assert page.locator(selector).evaluate_all("nodes => nodes.every(node => node.scrollWidth<=node.clientWidth)"), selector
     large_text.evaluate("node => node.remove()")
     assert not page.evaluate("Boolean(window.__pwned)")
+    language("zh-CN")
+
+    # Automatic clipboard feedback is backend-owned, separate from the task notice.
+    copies_before = sum(method == "CopyResult" for method, _ in requests)
+    dispatch({"revision": 72, "task_id": "automatic-copy-feedback", "stage": "error", "raw_text": "可用原文", "text": "最终正文", "notice": "输入失败", "notice_i18n": None, "copy_message_i18n": {"code": "popup.copy.failed"}})
+    presentation("result", 560)
+    assert page.locator("#copy-message").inner_text() == "复制失败，请重试"
+    assert page.locator("#notice").inner_text() == "输入失败"
+    language("en")
+    assert page.locator("#copy-message").inner_text() == "Copy failed"
+    assert page.locator("#notice").inner_text() == "输入失败"
+    dispatch({"revision": 73, "copy_message_i18n": {"code": "popup.copy.success"}})
+    assert page.locator("#copy-message").inner_text() == "Copied"
+    assert sum(method == "CopyResult" for method, _ in requests) == copies_before
+    dispatch({"revision": 74, "task_id": "after-automatic-copy", "stage": "recording", "raw_text": "", "text": "", "notice": "", "copy_message_i18n": None})
+    assert page.locator("#copy-message").is_hidden()
     language("zh-CN")
 
     fail_settings_read = True

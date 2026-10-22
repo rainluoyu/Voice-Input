@@ -21,6 +21,7 @@ type Config struct {
 	Mode       string    `json:"mode"`
 	Hotkey     string    `json:"hotkey"`
 	AIHotkey   string    `json:"ai_hotkey"`
+	General    General   `json:"general"`
 	Recording  Recording `json:"recording"`
 	ASR        ASR       `json:"asr"`
 	LLM        LLM       `json:"llm"`
@@ -29,6 +30,13 @@ type Config struct {
 	Popup      Popup     `json:"popup"`
 	Privacy    Privacy   `json:"privacy"`
 }
+type General struct {
+	StartWithWindows   bool `json:"start_with_windows"`
+	StartAsAdmin       bool `json:"start_as_admin"`
+	AutoCopy           bool `json:"auto_copy"`
+	MuteWhileRecording bool `json:"mute_while_recording"`
+}
+
 type Recording struct {
 	DeviceID   string `json:"device_id"`
 	MaxSeconds int    `json:"max_seconds"`
@@ -188,7 +196,10 @@ func (c Config) Validate() error {
 	if c.Exa.MaxCalls < 1 || c.Exa.MaxCalls > 8 || c.Exa.TimeoutSeconds < 8 || c.Exa.TimeoutSeconds > 15 {
 		return i18n.Error("settings.search_budget")
 	}
-	if c.Popup.AutoHideSeconds != 30 {
+	if c.General.StartAsAdmin && !c.General.StartWithWindows {
+		return i18n.Error("settings.startup_admin")
+	}
+	if c.Popup.AutoHideSeconds < 1 || c.Popup.AutoHideSeconds > 3600 {
 		return i18n.Error("settings.auto_hide")
 	}
 	if c.Privacy.SaveHistory || c.Privacy.LogText {

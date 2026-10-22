@@ -26,6 +26,7 @@ import (
 	"voice_input/internal/popup"
 	"voice_input/internal/search"
 	"voice_input/internal/settings"
+	"voice_input/internal/startup"
 	"voice_input/internal/wininput"
 )
 
@@ -96,6 +97,10 @@ func (d *Desktop) Snapshot() core.State {
 func (d *Desktop) ClosePopup()                 { d.controller.Close() }
 func (d *Desktop) KeepPopupOpen(taskID string) { d.controller.KeepOpen(taskID) }
 func (d *Desktop) ReplyToClarification(taskID string, turn uint64, stop bool) {
+	if !d.testMu.TryLock() {
+		return
+	}
+	defer d.testMu.Unlock()
 	d.controller.Reply(taskID, turn, stop)
 }
 func (d *Desktop) ShowSettings() {
@@ -156,17 +161,32 @@ func (d *Desktop) SaveSettings(cfg settings.Config) ActionResult {
 	if err := cfg.Validate(); err != nil {
 		return d.action(false, false, i18n.FromError(err, "popup.feedback.settings_invalid"))
 	}
+	var busy bool
+	application.InvokeSync(func() { busy = d.controller.Busy() })
+	if busy {
+		return d.action(false, false, i18n.M("popup.feedback.stop_before_save"))
+	}
+	previous := d.store.Get()
+	var saved bool
+	var saveErr error
+	// UAC and startup registration wait on this worker, never on the UI thread.
+	// testMu keeps hotkeys and reply recording out of the entire transaction.
+	err := startup.Save(startup.Options{Enabled: previous.General.StartWithWindows, Admin: previous.General.StartAsAdmin},
+		startup.Options{Enabled: cfg.General.StartWithWindows, Admin: cfg.General.StartAsAdmin}, func() error {
+			application.InvokeSync(func() {
+				saved, saveErr = hotkey.Replace(d.app.GlobalShortcut, []string{cfg.Hotkey, cfg.AIHotkey}, d.hotkeyFired, func() error { return d.store.Save(cfg) })
+			})
+			if saved {
+				return nil // A post-commit shortcut warning must not roll startup back.
+			}
+			return saveErr
+		})
+	if err != nil {
+		saveErr = err
+	}
 	var result ActionResult
-	// Wails shortcut operations are main-thread-affine. Do not hold controller
-	// state locks while synchronously invoking native UI work.
 	application.InvokeSync(func() {
-		if d.controller.Busy() {
-			result = d.action(false, false, i18n.M("popup.feedback.stop_before_save"))
-			return
-		}
-		previous := d.store.Get()
-		saved, err := hotkey.Replace(d.app.GlobalShortcut, []string{cfg.Hotkey, cfg.AIHotkey}, d.hotkeyFired, func() error { return d.store.Save(cfg) })
-		result = d.completeSettingsSave(saved, err, func() {
+		result = d.completeSettingsSave(saved, saveErr, func() {
 			d.applyPresentation(previous, d.store.Get())
 		})
 	})

@@ -33,7 +33,7 @@ func New(ctx context.Context, id string, intent app.Intent, cfg settings.Config,
 	if err := cfg.Validate(); err != nil {
 		return nil, app.TaskOptions{Locale: locale, Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent)}, err
 	}
-	options := app.TaskOptions{Locale: locale, Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent), RecordLimit: time.Duration(cfg.Recording.MaxSeconds) * time.Second, Timeout: time.Duration(cfg.LLM.TaskTimeoutSeconds) * time.Second}
+	options := app.TaskOptions{Locale: locale, Mode: cfg.Mode, Hotkey: cfg.HotkeyFor(intent), RecordLimit: time.Duration(cfg.Recording.MaxSeconds) * time.Second, Timeout: time.Duration(cfg.LLM.TaskTimeoutSeconds) * time.Second, AutoCopy: cfg.General.AutoCopy, AutoHide: time.Duration(cfg.Popup.AutoHideSeconds) * time.Second}
 	if !intent.Valid() {
 		return nil, options, i18n.Error("app.intent")
 	}
@@ -56,7 +56,7 @@ func New(ctx context.Context, id string, intent app.Intent, cfg settings.Config,
 	if err != nil {
 		return nil, options, err
 	}
-	session := &Session{Locale: locale, Recorder: audio.New(), ASR: adapter, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
+	session := &Session{Locale: locale, Recorder: audio.NewWithMute(cfg.General.MuteWhileRecording), ASR: adapter, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
 	if cfg.Mode == "live" {
 		key, err := vault.Get("llm")
 		if err != nil || settings.ValidKey(key) != nil {
@@ -85,17 +85,35 @@ func (s *Session) Begin(ctx context.Context) error {
 		}
 	})
 	if err != nil {
-		return netapi.Fail("audio", "device")
+		return recordingError(err)
 	}
 	return nil
 }
+func recordingError(err error) error {
+	var descriptor i18n.Descriptor
+	if errors.As(err, &descriptor) {
+		return err
+	}
+	if errors.Is(err, audio.ErrQuiet) {
+		return netapi.Fail("audio", "quiet")
+	}
+	return netapi.Fail("audio", "device")
+}
+func (s *Session) StopRecording(ctx context.Context) error {
+	_, err := s.Recorder.Stop(ctx)
+	if errors.Is(err, context.Canceled) || errors.Is(err, audio.ErrQuiet) {
+		return nil
+	}
+	if err != nil {
+		return recordingError(err)
+	}
+	return nil
+}
+
 func (s *Session) Transcribe(ctx context.Context) (string, error) {
 	data, err := s.Recorder.Stop(ctx)
 	if err != nil {
-		if errors.Is(err, audio.ErrQuiet) {
-			return "", netapi.Fail("audio", "quiet")
-		}
-		return "", netapi.Fail("audio", "device")
+		return "", recordingError(err)
 	}
 	return s.ASR.Transcribe(ctx, data)
 }
