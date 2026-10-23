@@ -132,7 +132,13 @@ func (b *windowsBackend) inspectTask(service, root *dispatch) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !sameTaskXML(actual, expected) {
+	if !sameTaskXMLForUser(actual, expected, b.sid, func(account string) (string, error) {
+		sid, _, _, err := windows.LookupSID("", account)
+		if err != nil {
+			return "", err
+		}
+		return sid.String(), nil
+	}) {
 		return false, errors.New("startup task definition was modified externally; refusing to replace it")
 	}
 	// OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
@@ -145,16 +151,11 @@ func (b *windowsBackend) inspectTask(service, root *dispatch) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	actualSD, err := windows.SecurityDescriptorFromString(sddl)
+	matching, err := sameTaskSecurity(sddl, taskSDDL(b.sid))
 	if err != nil {
 		return false, err
 	}
-	expectedSD, err := windows.SecurityDescriptorFromString(taskSDDL(b.sid))
-	if err != nil {
-		return false, err
-	}
-	normalized := actualSD.String()
-	if normalized == "" || normalized != expectedSD.String() {
+	if !matching {
 		return false, errors.New("startup task security was modified externally; refusing to replace it")
 	}
 	return true, nil

@@ -23,7 +23,11 @@ func TestShellExecuteInfoABI(t *testing.T) {
 func TestTaskSecurityDescriptorRoundTrip(t *testing.T) {
 	sddl := taskSDDL("S-1-5-21-100-200-300-1001")
 	sd, err := windows.SecurityDescriptorFromString(sddl)
-	if err != nil || sd.String() != sddl {
-		t.Fatalf("invalid fixed task descriptor: %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := windows.SecurityDescriptorFromString(sd.String())
+	if err != nil || roundTrip.String() != sd.String() {
+		t.Fatalf("invalid canonical task descriptor: %v", err)
 	}
 }

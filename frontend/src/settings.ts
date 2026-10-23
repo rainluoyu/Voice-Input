@@ -272,11 +272,18 @@ export function mountSettings(root:HTMLElement) {
  el('preferences').addEventListener('submit',async event=>{
   event.preventDefault();
   if(!loaded||saving||!validate())return;
-  const config=read();saving=true;syncControls();
+  saving=true;
   try {
+   localStatus('save-message','settings.ui.saving');
+   syncControls();
+   const config=read();
    const result=await perform('SaveSettings',[config],'save-message');
    if(result?.saved||result?.ok)baseline=structuredClone(config);
-  }finally{saving=false;syncControls();}
+  }catch{localStatus('save-message','settings.ui.operation_failed');}
+  finally{
+   saving=false;el<HTMLButtonElement>('save').disabled=!loaded;
+   try{syncControls();}catch{localStatus('save-message','settings.ui.operation_failed');}
+  }
  });
  for(const kind of services) {
   el(`save-key-${kind}`).addEventListener('click',async()=>{

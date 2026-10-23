@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"unicode/utf16"
@@ -57,6 +56,7 @@ func taskXML(exe, sid string) string {
   <RegistrationInfo>
     <Description>voice_input managed administrator startup</Description>
     <URI>\%s</URI>
+    <SecurityDescriptor>%s</SecurityDescriptor>
   </RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>%s</UserId></LogonTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>%s</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
@@ -77,7 +77,7 @@ func taskXML(exe, sid string) string {
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author"><Exec><Command>%s</Command></Exec></Actions>
-</Task>`, escape(taskName(sid)), escape(sid), escape(sid), escape(exe))
+</Task>`, escape(taskName(sid)), escape(taskSDDL(sid)), escape(sid), escape(sid), escape(exe))
 }
 
 // Do not grant the filtered user token permission to edit an elevated task.
@@ -85,18 +85,6 @@ func taskXML(exe, sid string) string {
 // externally changed security descriptors must not be silently discarded.
 func taskSDDL(sid string) string {
 	return "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;" + sid + ")"
-}
-
-// Task Scheduler itself normalizes the expected XML via ITaskDefinition.XmlText
-// before this comparison. Ignore only namespace spelling, attribute order and
-// formatting, not commands, arguments, triggers, settings or metadata.
-func sameTaskXML(actual, expected string) bool {
-	a, err := xmlTokens(actual)
-	if err != nil {
-		return false
-	}
-	b, err := xmlTokens(expected)
-	return err == nil && reflect.DeepEqual(a, b)
 }
 
 func xmlTokens(text string) ([]xml.Token, error) {

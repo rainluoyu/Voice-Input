@@ -2,7 +2,7 @@ module voice_input
 
 go 1.25.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/danieljoos/wincred v1.2.3

@@ -96,7 +96,7 @@ func pack(binary, output, root, rawVersion string) error {
 	if err = add("voice_input/voice_input.exe", content); err != nil {
 		return err
 	}
-	for _, path := range []string{"LICENSE", "README.md", "README.zh-CN.md", "docs/images/en/settings.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png", "docs/images/zh-CN/settings.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md", "docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md", "docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html"} {
+	for _, path := range []string{"LICENSE", "README.md", "README.zh-CN.md", "docs/images/en/settings.png", "docs/images/en/general.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png", "docs/images/zh-CN/settings.png", "docs/images/zh-CN/general.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md", "docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md", "docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html"} {
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			return err

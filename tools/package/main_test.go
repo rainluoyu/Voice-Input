@@ -27,8 +27,8 @@ var requiredDocuments = []string{
 	"LICENSE", "README.md", "README.zh-CN.md", "docs/USER_GUIDE.md", "docs/RELEASE_NOTES.md",
 	"docs/TEST_MATRIX.md", "docs/DEVELOPMENT.md", "docs/DICTATION_QUALITY_CASES.md",
 	"docs/REAL_SERVICE_ACCEPTANCE.md", "docs/SECURITY_CHECK.md", "tests/target.html",
-	"docs/images/en/settings.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
-	"docs/images/zh-CN/settings.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png",
+	"docs/images/en/settings.png", "docs/images/en/general.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
+	"docs/images/zh-CN/settings.png", "docs/images/zh-CN/general.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png",
 }
 
 func writeFixture(t *testing.T, root, path, content string) {
@@ -166,8 +166,8 @@ func TestPortableArchivesAndExecutableValidation(t *testing.T) {
 	if stableExe == "" {
 		t.Fatal("stable fixture unavailable")
 	}
-	for _, path := range []string{"LICENSE", "README.zh-CN.md", "docs/images/en/settings.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
-		"docs/images/zh-CN/settings.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png"} {
+	for _, path := range []string{"LICENSE", "README.zh-CN.md", "docs/images/en/settings.png", "docs/images/en/general.png", "docs/images/en/prompts.png", "docs/images/en/dialogue.png",
+		"docs/images/zh-CN/settings.png", "docs/images/zh-CN/general.png", "docs/images/zh-CN/prompts.png", "docs/images/zh-CN/dialogue.png"} {
 		t.Run("missing-"+path, func(t *testing.T) {
 			if err := os.Remove(filepath.Join(root, path)); err != nil {
 				t.Fatal(err)

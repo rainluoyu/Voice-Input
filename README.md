@@ -46,6 +46,10 @@ These are browser-rendered Web previews with fictional data; the native Windows 
 
 ![Example input settings](docs/images/en/settings.png)
 
+**General settings: configure login startup, automatic result copying, recording-time playback muting and result display duration.**
+
+![Example general settings](docs/images/en/general.png)
+
 **Separate prompts: adjust voice-polishing style and AI dialogue instructions.**
 
 ![Example custom prompts](docs/images/en/prompts.png)
@@ -57,7 +61,7 @@ These are browser-rendered Web previews with fictional data; the native Windows 
 ## Before you use it
 
 - **There is no focus, target-window or password-field check.** Output goes to whichever location is active when processing completes. Confirm the destination yourself.
-- Multi-line automatic input and manual Copy **replace the clipboard**; the old contents are not restored. A target application may interpret a paste as execution or submission even though this utility does not press Enter.
+- Multi-line automatic input, manual Copy and optional automatic result copying **replace the clipboard**; the old contents are not restored. Automatic copying also applies to single-line results and ASR transcripts; system clipboard history or sync may retain this text. A target application may interpret a paste as execution or submission even though this utility does not press Enter.
 - Audio goes to your configured ASR. AI processing sends transcription, supplied background and relevant clarification history to your configured LLM; optional search sends queries to Exa. Services may charge fees and have their own retention policies.
 - Start with fictional text in a disposable editor, not passwords or messages you intend to send.
 

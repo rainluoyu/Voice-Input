@@ -165,6 +165,50 @@ with sync_playwright() as p:
         assert page.locator("#start-as-admin").is_enabled()
         assert page.locator("#auto-hide-seconds").input_value() == str(seconds)
     page.locator("#auto-hide-seconds").fill("88")
+    # A synchronous refresh failure after disabling Save must not strand saving=true.
+    before = sum(method == "SaveSettings" for method, _ in requests)
+    page.evaluate("""() => {
+      const original=window.structuredClone; let calls=0;
+      window.structuredClone=function(...args) {
+        if(++calls===2) { window.structuredClone=original; window.__saveRefreshFault=true; throw new Error('injected save refresh'); }
+        return original.apply(this,args);
+      };
+      document.querySelector('#preferences').requestSubmit();
+    }""")
+    page.wait_for_function('!document.querySelector("#save").disabled')
+    assert page.evaluate("window.__saveRefreshFault === true")
+    assert sum(method == "SaveSettings" for method, _ in requests) == before
+    assert page.locator("#save-message").inner_text() == "操作失败，请重试"
+    assert general_draft() == enabled_general
+    assert page.locator("#auto-hide-seconds").input_value() == "88"
+
+    # Retrying replaces the old error while the real request is still pending.
+    page.locator("#save").click()
+    wait_pending(pending_save)
+    assert page.locator("#save").is_disabled()
+    assert "正在保存" in page.locator("#save-message").inner_text()
+    assert "操作失败" not in page.locator("#save-message").inner_text()
+    save_result(False)
+    assert general_draft() == enabled_general
+    page.locator("#save").click()
+    wait_pending(pending_save)
+    assert "正在保存" in page.locator("#save-message").inner_text()
+
+    # Cleanup failure must also release Save without an unhandled page exception.
+    page.evaluate("""() => {
+      const original=window.structuredClone;
+      window.structuredClone=function(...args) {
+        window.structuredClone=original; window.__saveCleanupFault=true;
+        throw new Error('injected save cleanup');
+      };
+    }""")
+    save_result(False)
+    assert page.evaluate("window.__saveCleanupFault === true")
+    assert page.locator("#save-message").inner_text() == "操作失败，请重试"
+    page.locator("#save").click()
+    save_result(False, http_error=True)
+    assert page.locator("#auto-hide-seconds").input_value() == "88"
+    assert general_draft() == enabled_general
     tab("models")
     assert page.locator("#test-asr").is_enabled()
     assert page.locator("#test-llm").is_enabled(), "General and popup settings do not dirty service probes"

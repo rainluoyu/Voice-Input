@@ -8,7 +8,7 @@ import (
 )
 
 // Version is overridden by release builds using -X=voice_input/internal/buildmeta.Version.
-var Version = "0.2.0"
+var Version = "0.3.0"
 
 // ParsedVersion keeps the canonical SemVer and its Windows numeric counterpart.
 type ParsedVersion struct {

@@ -79,6 +79,7 @@ def render_language(browser, locale):
     config = {
         "version": 1, "ui_language": locale, "mode": "live", "hotkey": "Ctrl+Alt+R", "ai_hotkey": "Ctrl+Alt+A",
         "recording": {"device_id": "default", "max_seconds": 120},
+        "general": {"start_with_windows": False, "start_as_admin": False, "auto_copy": False, "mute_while_recording": False},
         "asr": {"provider": "openai_compatible", "endpoint": "https://asr.example/v1/audio/transcriptions", "model": "asr-example", "language": "", "timeout_seconds": 45},
         "llm": {"base_url": "https://llm.example/v1", "model": "llm-example", "timeout_seconds": 45, "task_timeout_seconds": 90, "output_format": "json_schema", "dictation_prompt": prompts[locale]["dictation"], "dialogue_prompt": prompts[locale]["dialogue"], "max_tool_rounds": 2},
         "exa": {"enabled": False, "search_type": "instant", "max_calls": 2, "timeout_seconds": 10},
@@ -96,7 +97,7 @@ def render_language(browser, locale):
             payload = route.request.post_data_json
             method = payload.get("args", {}).get("methodName", "").rsplit(".", 1)[-1]
             if method == "GetSettings":
-                result = {"config": config, "keys": {"asr": False, "llm": False, "exa": False}, "version": "0.2.0-preview", "locale": locale, "system_locale": locale, "prompt_defaults": prompts[locale], "prompt_defaults_by_locale": prompts}
+                result = {"config": config, "keys": {"asr": False, "llm": False, "exa": False}, "version": "0.3.0-preview", "locale": locale, "system_locale": locale, "prompt_defaults": prompts[locale], "prompt_defaults_by_locale": prompts}
             elif method == "StartupError":
                 result = {"message": ""}
             elif method == "GetPresentation":
@@ -122,12 +123,23 @@ def render_language(browser, locale):
         return page
 
     settings = new_page()
+    settings.set_viewport_size({"width": 760, "height": 1040})
     settings.goto("http://wails.localhost/?view=settings")
     settings.wait_for_function("!document.querySelector('#settings-fields').disabled")
     settled(settings)
     check_language(settings, locale)
     assert settings.locator("#profile-custom").input_value() == config["profile"]["custom_background"]
+    assert settings.locator(".settings-body").evaluate("node => node.scrollHeight <= node.clientHeight")
     settings.locator(".settings").screenshot(path=str(output / "settings.png"), animations="disabled")
+    settings.set_viewport_size({"width": 760, "height": 800})
+    settings.locator("#tab-general").click()
+    settled(settings)
+    check_language(settings, locale)
+    for field in ("start-with-windows", "start-as-admin", "auto-copy", "mute-while-recording"):
+        assert not settings.locator("#" + field).is_checked()
+    assert settings.locator("#start-as-admin").is_disabled()
+    assert settings.locator("#auto-hide-seconds").input_value() == "30"
+    settings.locator(".settings").screenshot(path=str(output / "general.png"), animations="disabled")
     settings.locator("#tab-prompts").click()
     settings.locator("#prompt-tab-dialogue").click()
     settled(settings)
@@ -174,4 +186,4 @@ with sync_playwright() as playwright:
     assert not errors, errors
     browser.close()
 
-print("Generated six bilingual documentation previews with fictional custom rules and data; no Windows or real service calls.")
+print("Generated eight bilingual documentation previews with fictional custom rules and data; no Windows or real service calls.")

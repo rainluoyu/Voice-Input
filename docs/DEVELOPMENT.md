@@ -2,7 +2,7 @@
 
 ## 工具链与结构
 
-- Go 1.26.9，由 `go.mod` 的 `toolchain` 声明选择；CI 使用 Node.js 24.12+。
+- Go 1.26.10，由 `go.mod` 的 `toolchain` 声明选择；CI 使用 Node.js 24.12+。
 - Wails 与前端 runtime 固定为 `v3.0.0-beta.30`。Go/npm 锁文件均应提交。
 - Windows 10/11 x64 为运行目标；Linux 入口仅显示平台提示。
 
@@ -102,7 +102,7 @@ go run ./tools/package -exe bin/voice_input.exe -version "$version"
 
 `version` 必须与构建时一致。也可以用 `./scripts/package.sh 0.2.1` 构建指定版本；省略参数时使用共享默认版本。版本、资源与文件名不得分别修改。
 
-打包器回读实际 x64 PE、Go 目标、版本资源及普通权限 manifest，只收录明确白名单：程序、项目 LICENSE、双语 README、公开文档、中英各三张审核后的界面示例、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
+打包器回读实际 x64 PE、Go 目标、版本资源及普通权限 manifest，只收录明确白名单：程序、项目 LICENSE、双语 README、公开文档、中英各四张审核后的界面示例、输入靶页、构建信息和第三方许可证。不要改成递归收集工作目录。
 
 输出 `voice_input-<version>-windows-amd64.zip` 及对应 `.zip.sha256`；`BUILDINFO.json` 记录回验后的产品版本、EXE 摘要、平台、工具链及未签名/桌面待验收状态。`-trimpath` 保留以避免写入个人构建路径；Go 在此模式不记录链接参数，因此版本注入通过统一构建命令和宿主注入测试保证，打包器不声称能直接读取运行期 Go 变量。
 
@@ -112,9 +112,9 @@ go run ./tools/package -exe bin/voice_input.exe -version "$version"
 
 ## 文档截图
 
-`tests/docs_screenshots.py` 使用实际前端与拦截的 Wails 响应，分别生成简中和英文的输入设置、提示词、澄清/结果预览，每种语言三张。背景、任务和自定义提示词均为对应语言的虚构示例。先在本机回环启动 Vite 预览，再通过已准备 Playwright 的隔离 uv 项目运行该脚本；`UI_TEST_PORT` 指定预览端口，`--out` 可将试拍图留在仓库外。不会调用麦克风、Windows 或真实服务。
+`tests/docs_screenshots.py` 使用实际前端与拦截的 Wails 响应，分别生成简中和英文的输入设置、通用设置、提示词、澄清/结果预览，每种语言四张。背景、任务和自定义提示词均为对应语言的虚构示例。先在本机回环启动 Vite 预览，再通过已准备 Playwright 的隔离 uv 项目运行该脚本；`UI_TEST_PORT` 指定预览端口，`--out` 可将试拍图留在仓库外。不会调用麦克风、Windows 或真实服务。
 
-只发布 `docs/images/zh-CN/` 和 `docs/images/en/` 中各三张审核后的图，README 分别引用对应语言；必须注明浏览器预览与示例数据，不能冒充 Windows 原生任务浮窗实拍。图片变更后重新核对隐私、中英文字形、英文残留文案和 README/ZIP 链接。
+只发布 `docs/images/zh-CN/` 和 `docs/images/en/` 中各四张审核后的图，README 分别引用对应语言；必须注明浏览器预览与示例数据，不能冒充 Windows 原生任务浮窗实拍。图片变更后重新核对隐私、中英文字形、英文残留文案和 README/ZIP 链接。
 
 ## GitHub 自动发布
 

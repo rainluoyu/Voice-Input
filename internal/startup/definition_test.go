@@ -34,8 +34,11 @@ func TestTaskDefinitionHasOnlyCurrentExecutableAndSID(t *testing.T) {
 		t.Fatal(err)
 	}
 	var task struct {
-		Registration struct{ URI string } `xml:"RegistrationInfo"`
-		Principals   []struct {
+		Registration struct {
+			URI                string
+			SecurityDescriptor string
+		} `xml:"RegistrationInfo"`
+		Principals []struct {
 			UserID    string `xml:"UserId"`
 			LogonType string
 			RunLevel  string
@@ -56,6 +59,9 @@ func TestTaskDefinitionHasOnlyCurrentExecutableAndSID(t *testing.T) {
 	}
 	if task.Registration.URI != `\`+taskName(sid) || !strings.Contains(taskName(sid), sid) {
 		t.Fatal("task name is not bound to SID")
+	}
+	if task.Registration.SecurityDescriptor != taskSDDL(sid) {
+		t.Fatal("fixed XML must include the ACL serialized by task registration")
 	}
 	if len(task.Principals) != 1 || task.Principals[0].UserID != sid || task.Principals[0].LogonType != "InteractiveToken" || task.Principals[0].RunLevel != "HighestAvailable" {
 		t.Fatalf("unsafe principal: %#v", task.Principals)
@@ -97,6 +103,43 @@ func TestTaskXMLComparisonRejectsExternalChanges(t *testing.T) {
 	for i, changed := range changes {
 		if sameTaskXML(changed, expected) {
 			t.Fatalf("accepted externally modified task #%d", i)
+		}
+	}
+}
+
+func TestTaskXMLAcceptsOnlyEquivalentUserIdentities(t *testing.T) {
+	const sid = "S-1-5-21-100-200-300-1001"
+	const account = `HOST\User`
+	expected := taskXML(`C:\voice_input.exe`, sid)
+	resolve := func(name string) (string, error) {
+		switch strings.ToLower(name) {
+		case strings.ToLower(account):
+			return sid, nil
+		case `host\other`:
+			return "S-1-5-21-100-200-300-1002", nil
+		default:
+			return "", errors.New("unknown account")
+		}
+	}
+	for _, actual := range []string{
+		expected,
+		strings.Replace(expected, "<UserId>"+sid+"</UserId>", "<UserId>"+account+"</UserId>", 1),
+		strings.ReplaceAll(expected, "<UserId>"+sid+"</UserId>", "<UserId>host\\user</UserId>"),
+	} {
+		if !sameTaskXMLForUser(actual, expected, sid, resolve) {
+			t.Fatal("equivalent registered identity was rejected")
+		}
+	}
+	for _, actual := range []string{
+		strings.Replace(expected, "<UserId>"+sid+"</UserId>", `<UserId>HOST\Other</UserId>`, 1),
+		strings.Replace(expected, "<UserId>"+sid+"</UserId>", `<UserId>Unknown</UserId>`, 1),
+		strings.Replace(expected, "<UserId>"+sid+"</UserId>", `<UserId xmlns="other">HOST\User</UserId>`, 1),
+		strings.Replace(expected, `C:\voice_input.exe`, account, 1),
+		strings.Replace(expected, "</RegistrationInfo>", "<UserId>"+account+"</UserId></RegistrationInfo>", 1),
+		strings.Replace(expected, "</Actions>", "<Exec><Command>evil.exe</Command></Exec></Actions>", 1),
+	} {
+		if sameTaskXMLForUser(actual, expected, sid, resolve) {
+			t.Fatal("identity normalization accepted a different or modified task")
 		}
 	}
 }
