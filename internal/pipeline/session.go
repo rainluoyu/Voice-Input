@@ -43,7 +43,7 @@ func New(ctx context.Context, id string, intent app.Intent, cfg settings.Config,
 	if err := cfg.ValidateReady(); err != nil {
 		return nil, options, err
 	}
-	client, err := netapi.Client()
+	client, err := netapi.Client(cfg.General.Proxy)
 	if err != nil {
 		return nil, options, netapi.Fail("asr", "config")
 	}

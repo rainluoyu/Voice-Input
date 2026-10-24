@@ -13,7 +13,7 @@ const SampleRate = 16000
 const MaxWAVBytes = 10 << 20
 
 var ErrUnavailable = errors.New("麦克风不可用：检查设备、隐私权限和独占占用")
-var ErrQuiet = errors.New("录音过短或接近静音；请检查麦克风后重试")
+var ErrQuiet = errors.New("录音没有内容或时间过短，请重新录音")
 
 type Device struct {
 	ID       string        `json:"id"`
@@ -113,15 +113,27 @@ func Encode(samples []float32) (Data, error) {
 	if len(samples) < SampleRate*3/10 || len(samples)*2+44 > MaxWAVBytes {
 		return Data{}, ErrQuiet
 	}
+	const frameSamples = SampleRate / 50
+	const minActiveSamples = SampleRate * 8 / 100
 	var energy float64
-	for _, sample := range samples {
-		if math.IsNaN(float64(sample)) || math.IsInf(float64(sample), 0) {
-			return Data{}, errors.New("音频采样无效")
+	activeSamples := 0
+	for start := 0; start < len(samples); start += frameSamples {
+		frame := samples[start:min(start+frameSamples, len(samples))]
+		var frameEnergy float64
+		for _, sample := range frame {
+			if math.IsNaN(float64(sample)) || math.IsInf(float64(sample), 0) {
+				return Data{}, errors.New("音频采样无效")
+			}
+			squared := float64(sample) * float64(sample)
+			energy += squared
+			frameEnergy += squared
 		}
-		energy += float64(sample) * float64(sample)
+		if math.Sqrt(frameEnergy/float64(len(frame))) >= 0.003 {
+			activeSamples += len(frame)
+		}
 	}
 	rms := math.Sqrt(energy / float64(len(samples)))
-	if rms < 0.003 {
+	if activeSamples < minActiveSamples {
 		return Data{}, ErrQuiet
 	}
 	return Data{WAV: WAV(samples), Duration: time.Duration(len(samples)) * time.Second / SampleRate, RMS: rms}, nil

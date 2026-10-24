@@ -97,7 +97,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(cross["env"]["CGO_ENABLED"], "0")
         self.assertEqual(cross["env"]["GOOS"], "windows")
         self.assertEqual(cross["env"]["GOARCH"], "amd64")
-        self.assertIn("for package in wininput audio settings app popup instance startup; do", cross["run"])
+        self.assertIn("for package in wininput audio settings app popup instance startup tray netapi; do", cross["run"])
         self.assertIn("go test -c", cross["run"])
         self.assertNotIn("always()", self.text)
         self.assertNotIn("arm", self.text.lower())

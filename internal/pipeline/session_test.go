@@ -12,6 +12,7 @@ import (
 	"voice_input/internal/app"
 	"voice_input/internal/asr"
 	"voice_input/internal/audio"
+	"voice_input/internal/i18n"
 	"voice_input/internal/llm"
 	"voice_input/internal/settings"
 )
@@ -21,6 +22,21 @@ type fakeRecorder struct{}
 func (fakeRecorder) Start(context.Context, string, int, func(float64)) error { return nil }
 func (fakeRecorder) Stop(context.Context) (audio.Data, error) {
 	return audio.Data{WAV: audio.WAV(make([]float32, 16000))}, nil
+}
+
+type encodedRecorder struct {
+	fakeRecorder
+	samples []float32
+}
+
+func (r encodedRecorder) Stop(context.Context) (audio.Data, error) { return audio.Encode(r.samples) }
+
+func recordingSamples(length int, level float32) []float32 {
+	samples := make([]float32, length)
+	for i := range samples {
+		samples[i] = level
+	}
+	return samples
 }
 
 type fakeInjector struct{ count atomic.Int32 }
@@ -76,6 +92,80 @@ func TestHTTPPipelineWithFakeDesktopAndAudio(t *testing.T) {
 	}
 	t.Fatalf("pipeline did not complete: %+v", controller.Snapshot())
 }
+func TestQuietRecordingStopsBeforeHTTPAndCanBeRetried(t *testing.T) {
+	impulse := make([]float32, audio.SampleRate)
+	impulse[160] = 1
+	crossFrameImpulse := make([]float32, audio.SampleRate)
+	crossFrameImpulse[319], crossFrameImpulse[320] = 1, 1
+	validSamples := make([]float32, audio.SampleRate*10)
+	copy(validSamples[80000:], recordingSamples(1600, .01))
+	for _, tt := range []struct {
+		name    string
+		samples []float32
+	}{
+		{"empty", nil},
+		{"299ms", recordingSamples(4784, .1)},
+		{"300ms_silence", make([]float32, 4800)},
+		{"near_silence", recordingSamples(16000, .002)},
+		{"single_strong_impulse", impulse},
+		{"cross_frame_impulse", crossFrameImpulse},
+		{"60ms_activity", append(recordingSamples(960, .1), make([]float32, 3840)...)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var asrCalls, llmCalls, factoryCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/asr":
+					asrCalls.Add(1)
+					_ = json.NewEncoder(w).Encode(map[string]string{"text": "重新录制的请求"})
+				case "/v1/chat/completions":
+					llmCalls.Add(1)
+					_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"status\":\"insert\",\"text\":\"有效短句结果\",\"notice\":\"\"}"},"finish_reason":"stop"}]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			cfg := liveConfig()
+			cfg.ASR.Endpoint, cfg.LLM.BaseURL = server.URL+"/asr", server.URL+"/v1"
+			injector := &fakeInjector{}
+			controller := app.NewWithFactory(func(_ context.Context, id string, intent app.Intent, notify func(app.Stage, float64)) (app.Processor, app.TaskOptions, error) {
+				samples := tt.samples
+				if factoryCalls.Add(1) > 1 {
+					samples = validSamples
+				}
+				session := &Session{Recorder: encodedRecorder{samples: samples}, ASR: asr.Compatible{Client: server.Client(), Config: cfg.ASR, Key: "asr-key"}, LLM: llm.Compatible{Client: server.Client(), Config: cfg.LLM, Key: "llm-key"}, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
+				return session, app.TaskOptions{Locale: i18n.ZhCN, Mode: "live", Timeout: 2 * time.Second}, nil
+			}, injector, time.Hour)
+			defer controller.Close()
+			wait := func(stage app.Stage) app.State {
+				t.Helper()
+				deadline := time.Now().Add(3 * time.Second)
+				for time.Now().Before(deadline) {
+					if state := controller.Snapshot(); state.Stage == stage {
+						return state
+					}
+					time.Sleep(time.Millisecond)
+				}
+				t.Fatalf("stage %s not reached: %+v", stage, controller.Snapshot())
+				return app.State{}
+			}
+			controller.Toggle(app.Dialogue)
+			controller.Toggle(app.Dialogue)
+			failed := wait(app.Error)
+			if failed.NoticeMessage == nil || failed.NoticeMessage.Code != "net.audio.quiet" || failed.Notice != "录音没有内容或时间过短，请重新录音" || asrCalls.Load() != 0 || llmCalls.Load() != 0 || injector.count.Load() != 0 {
+				t.Fatalf("quiet recording reached downstream services: %+v, ASR %d, LLM %d, injections %d", failed, asrCalls.Load(), llmCalls.Load(), injector.count.Load())
+			}
+			controller.Toggle(app.Dialogue)
+			controller.Toggle(app.Dialogue)
+			end := wait(app.Done)
+			if end.TaskID == failed.TaskID || end.RawText != "重新录制的请求" || end.Text != "有效短句结果" || factoryCalls.Load() != 2 || asrCalls.Load() != 1 || llmCalls.Load() != 1 || injector.count.Load() != 1 {
+				t.Fatalf("rerecording did not recover: %+v", end)
+			}
+		})
+	}
+}
+
 func TestASRPassThroughDoesNotCallLLM(t *testing.T) {
 	s := Session{Intent: app.Dictation, Config: settings.Config{Mode: "asr_mock_llm"}}
 	r, err := s.Complete(context.Background(), "真实 ASR 文本")
@@ -146,8 +236,15 @@ func TestSessionFactoryKeyGates(t *testing.T) {
 		cancel()
 	}
 	t.Setenv("PROXY_URL", "unsupported://proxy")
-	if _, _, err := New(context.Background(), "task", app.Dictation, liveConfig(), keyVault{"asr": "test-asr", "llm": "test-llm"}, nil); err == nil {
-		t.Fatal("invalid proxy accepted")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cfg := liveConfig()
+	if _, _, err := New(ctx, "task", app.Dictation, cfg, keyVault{"asr": "test-asr", "llm": "test-llm"}, nil); err != nil {
+		t.Fatal("legacy PROXY_URL must not affect the application", err)
+	}
+	cfg.General.Proxy.Mode, cfg.General.Proxy.Protocol = "manual", "unsupported"
+	if _, _, err := New(ctx, "task", app.Dictation, cfg, keyVault{"asr": "test-asr", "llm": "test-llm"}, nil); err == nil {
+		t.Fatal("invalid application proxy accepted")
 	}
 }
 

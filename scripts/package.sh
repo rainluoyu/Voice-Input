@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ -n "${PROXY_URL:-}" ]]; then
- export HTTPS_PROXY="$PROXY_URL" HTTP_PROXY="$PROXY_URL"
- export npm_config_proxy="$PROXY_URL" npm_config_https_proxy="$PROXY_URL"
-fi
 if (( $# > 1 )); then
  printf 'Usage: %s [version]\n' "$0" >&2
  exit 2

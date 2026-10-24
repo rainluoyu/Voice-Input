@@ -17,14 +17,14 @@ func TestGeneralSettingsCompatibilityAndRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := store.Get()
-	if cfg.General != (General{}) || cfg.Popup.AutoHideSeconds != 30 {
+	if cfg.General != Default().General || cfg.Popup.AutoHideSeconds != 30 {
 		t.Fatalf("legacy defaults changed: %+v", cfg)
 	}
 	after, _ := os.ReadFile(path)
 	if string(after) != string(original) {
 		t.Fatal("opening legacy settings rewrote the file")
 	}
-	cfg.General = General{StartWithWindows: true, StartAsAdmin: true, AutoCopy: true, MuteWhileRecording: true}
+	cfg.General = General{Proxy: cfg.General.Proxy, StartWithWindows: true, StartAsAdmin: true, AutoCopy: true, MuteWhileRecording: true}
 	cfg.Popup.AutoHideSeconds = 75
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
@@ -33,12 +33,13 @@ func TestGeneralSettingsCompatibilityAndRoundTrip(t *testing.T) {
 	if err != nil || reloaded.Get() != cfg {
 		t.Fatalf("general settings did not round trip: %v", err)
 	}
-	cfg.General = General{}
+	cfg.General = Default().General
+	cfg.General.Proxy.Enabled = false
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err = Open(path)
-	if err != nil || reloaded.Get().General != (General{}) {
+	if err != nil || reloaded.Get().General != cfg.General {
 		t.Fatalf("explicit false settings changed: %v", err)
 	}
 }

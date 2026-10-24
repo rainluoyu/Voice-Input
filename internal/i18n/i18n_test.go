@@ -71,6 +71,25 @@ func TestEnglishApplicationCopy(t *testing.T) {
 	}
 }
 
+func TestQuietRecordingMessages(t *testing.T) {
+	for _, tt := range []struct {
+		locale Locale
+		code   string
+		want   string
+	}{
+		{ZhCN, "net.audio.quiet", "录音没有内容或时间过短，请重新录音"},
+		{ZhCN, "net.audio.quiet.retry", "录音没有内容或时间过短，可重新录制补充"},
+		{EN, "net.audio.quiet", "The recording has no content or is too short. Please record again"},
+		{EN, "net.audio.quiet.retry", "The recording has no content or is too short. You can record your supplementary answer again"},
+	} {
+		t.Run(string(tt.locale)+"/"+tt.code, func(t *testing.T) {
+			if got := M(tt.code).Text(tt.locale); got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMultipleDictionariesMerge(t *testing.T) {
 	files := fstest.MapFS{
 		"one.json": {Data: []byte(`{"en":{"a":"A"},"zh-CN":{"a":"甲"}}`)},

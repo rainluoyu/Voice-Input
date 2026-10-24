@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -65,29 +64,15 @@ func Endpoint(raw string) error {
 	return nil
 }
 func Loopback(host string) bool {
-	return host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
 }
-func Client() (*http.Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if raw := os.Getenv("PROXY_URL"); raw != "" {
-		proxy, err := url.Parse(raw)
-		if err != nil || proxy.Host == "" || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5" && proxy.Scheme != "socks5h") {
-			return nil, i18n.Error("net.proxy")
-		}
-		transport.Proxy = func(r *http.Request) (*url.URL, error) {
-			if Loopback(r.URL.Hostname()) {
-				return nil, nil
-			}
-			return proxy, nil
-		}
-	} else {
-		transport.Proxy = func(r *http.Request) (*url.URL, error) {
-			if Loopback(r.URL.Hostname()) {
-				return nil, nil
-			}
-			return http.ProxyFromEnvironment(r)
-		}
+func Client(config ProxyConfig) (*http.Client, error) {
+	proxy, err := configuredProxy(config, systemProxy)
+	if err != nil {
+		return nil, err
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = proxy             // nil explicitly disables inherited environment proxies.
 	transport.ResponseHeaderTimeout = 0 // per-provider contexts own the configured timeout
 	return &http.Client{Transport: transport, Timeout: 0, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }
@@ -97,6 +82,9 @@ func Do(ctx context.Context, client *http.Client, req *http.Request, service str
 	}
 	res, err := client.Do(req.WithContext(ctx))
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(err, errSystemProxy) {
+			return nil, i18n.Error("net.proxy_system")
+		}
 		return nil, transportError(ctx, service)
 	}
 	defer res.Body.Close()

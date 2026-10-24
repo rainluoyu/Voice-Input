@@ -71,15 +71,16 @@
     "popup.feedback.task_busy": "A task is already running; finish or cancel it first",
     "popup.feedback.service_invalid": "Unknown service; select ASR, LLM or Exa",
     "popup.feedback.key_unavailable": "The credential is missing or unavailable; check the key for this service",
-    "popup.feedback.proxy_invalid": "Invalid proxy configuration; check the Windows PROXY_URL environment variable",
+    "popup.feedback.proxy_invalid": "Invalid proxy settings; check the proxy options in General",
     "popup.feedback.test_failed": "Connection test failed; check the address, model, key and proxy",
     "popup.feedback.connected": "Connected",
     "popup.feedback.instance_failed": "Could not acquire the single-instance lock",
     "popup.feedback.config_open_failed": "Could not open the configuration; check the settings file",
     "popup.feedback.desktop_failed": "Desktop or shortcut initialization failed; check settings",
+    "popup.feedback.tray_failed": "The system tray icon is unavailable; restart the app after the Windows desktop is ready",
     "popup.feedback.shortcut_failed": "Could not register shortcuts: {shortcuts}",
     "popup.feedback.popup_failed": "Could not initialize the popup; restart the app",
-    "popup.feedback.assets_unavailable": "Frontend assets are unavailable; run npm run build first",
+    "popup.feedback.assets_unavailable": "Application resources are unavailable; download and extract the application package again",
     "popup.feedback.start_failed": "Could not start {name}; check WebView2 Runtime"
   },
   "zh-CN": {
@@ -154,15 +155,16 @@
     "popup.feedback.task_busy": "已有任务正在运行，请先结束或取消",
     "popup.feedback.service_invalid": "服务无效；请选择 ASR、LLM 或 Exa",
     "popup.feedback.key_unavailable": "安全凭据未配置或不可用；请检查对应服务的密钥",
-    "popup.feedback.proxy_invalid": "代理配置无效；检查 Windows 环境变量 PROXY_URL",
+    "popup.feedback.proxy_invalid": "代理设置无效，请检查通用设置中的代理选项",
     "popup.feedback.test_failed": "连接测试失败；检查地址、模型、密钥与代理",
     "popup.feedback.connected": "连接成功",
     "popup.feedback.instance_failed": "无法获取单实例锁",
     "popup.feedback.config_open_failed": "无法打开配置；请检查设置文件",
     "popup.feedback.desktop_failed": "桌面或快捷键初始化失败，请检查设置",
+    "popup.feedback.tray_failed": "系统托盘图标暂不可用，请在 Windows 桌面就绪后重启程序",
     "popup.feedback.shortcut_failed": "快捷键注册失败：{shortcuts}",
     "popup.feedback.popup_failed": "浮窗初始化失败，请重启程序",
-    "popup.feedback.assets_unavailable": "前端资源不可用；请先 npm run build",
+    "popup.feedback.assets_unavailable": "程序资源不可用，请重新下载并解压程序包",
     "popup.feedback.start_failed": "{name} 启动失败，请检查 WebView2 Runtime"
   }
 }

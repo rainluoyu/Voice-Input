@@ -60,8 +60,11 @@ func TestHTTPClarificationRoundTrip(t *testing.T) {
 	cfg.LLM.Model = "llm"
 	injector := &fakeInjector{}
 	controller := app.NewWithFactory(func(ctx context.Context, id string, intent app.Intent, notify func(app.Stage, float64)) (app.Processor, app.TaskOptions, error) {
-		factoryCalls.Add(1)
-		session := &Session{Recorder: fakeRecorder{}, ASR: asr.Compatible{Client: server.Client(), Config: cfg.ASR, Key: "asr-key"}, LLM: llm.Compatible{Client: server.Client(), Config: cfg.LLM, Key: "llm-key"}, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
+		samples := recordingSamples(4800, .01)
+		if factoryCalls.Add(1) == 2 {
+			samples = nil
+		}
+		session := &Session{Recorder: encodedRecorder{samples: samples}, ASR: asr.Compatible{Client: server.Client(), Config: cfg.ASR, Key: "asr-key"}, LLM: llm.Compatible{Client: server.Client(), Config: cfg.LLM, Key: "llm-key"}, Config: cfg, TaskID: id, Intent: intent, Notify: notify}
 		return session, app.TaskOptions{Mode: "live", Hotkey: "Ctrl+Alt+R", Timeout: time.Second}, nil
 	}, injector, 30*time.Second)
 	defer controller.Close()
@@ -87,8 +90,15 @@ func TestHTTPClarificationRoundTrip(t *testing.T) {
 	controller.Reply(pending.TaskID, pending.Turn, false)
 	recording := controller.Snapshot()
 	controller.Reply(recording.TaskID, recording.Turn, true)
+	retry := wait(app.Clarify)
+	if retry.TaskID != pending.TaskID || retry.Turn != 2 || retry.Question != question || retry.RawText != original || retry.HideAt != 0 || !retry.Visible || retry.Replying || retry.NoticeMessage == nil || retry.NoticeMessage.Code != "net.audio.quiet.retry" || retry.Notice != "录音没有内容或时间过短，可重新录制补充" || asrCalls.Load() != 1 || llmCalls.Load() != 1 || injector.count.Load() != 0 {
+		t.Fatalf("quiet supplement lost the original question or reached downstream services: %+v", retry)
+	}
+	controller.Reply(retry.TaskID, retry.Turn, false)
+	recording = controller.Snapshot()
+	controller.Reply(recording.TaskID, recording.Turn, true)
 	end := wait(app.Done)
-	if end.TaskID != pending.TaskID || end.Turn != 2 || end.Text != "根据原请求和补充生成的介绍。" || !strings.Contains(end.RawText, "补充 1：车手冠军") || injector.count.Load() != 1 || asrCalls.Load() != 2 || llmCalls.Load() != 2 || factoryCalls.Load() != 2 {
+	if end.TaskID != pending.TaskID || end.Turn != 3 || end.Text != "根据原请求和补充生成的介绍。" || !strings.Contains(end.RawText, "补充 1：车手冠军") || injector.count.Load() != 1 || asrCalls.Load() != 2 || llmCalls.Load() != 2 || factoryCalls.Load() != 3 {
 		t.Fatalf("roundtrip failed: %+v", end)
 	}
 }

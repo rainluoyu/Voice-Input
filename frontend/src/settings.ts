@@ -4,6 +4,7 @@ import {browserLocale, resolveLocale, t, message, translate} from './i18n';
 type Device = {id:string;name:string;name_i18n?:Message};
 type Service = 'asr'|'llm'|'exa';
 type PromptKind = 'dictation'|'dialogue';
+type ProxyConfig = Config['general']['proxy'];
 const services:Service[] = ['asr','llm','exa'];
 const promptKinds:PromptKind[] = ['dictation','dialogue'];
 const textLimit = 16000;
@@ -41,6 +42,14 @@ export function mountSettings(root:HTMLElement) {
  <section class="settings-group"><h2><label for="profile-custom">${text('settings.ui.background')}</label></h2><textarea id="profile-custom" class="background-input" rows="8" aria-describedby="profile-count" data-i18n-placeholder="settings.ui.background.placeholder"></textarea><output id="profile-count" class="character-count" for="profile-custom"></output></section>
  </section>
  <section id="panel-general" class="settings-panel" role="tabpanel" aria-labelledby="tab-general" data-settings-panel="general" hidden>
+ <section class="settings-group"><h2>${text('settings.ui.general.proxy')}</h2><div class="form-grid">
+ <div class="span-two"><label class="check" for="proxy-enabled"><input id="proxy-enabled" type="checkbox" aria-describedby="proxy-enabled-hint">${text('settings.ui.general.proxy.enabled')}</label><small id="proxy-enabled-hint" data-i18n="settings.ui.general.proxy.enabled.hint"></small></div>
+ <label class="span-two" for="proxy-mode">${text('settings.ui.general.proxy.mode')}<select id="proxy-mode" required aria-describedby="proxy-mode-hint"><option value="system" data-i18n="settings.ui.general.proxy.mode.system"></option><option value="manual" data-i18n="settings.ui.general.proxy.mode.manual"></option></select><small id="proxy-mode-hint" data-i18n="settings.ui.general.proxy.mode.hint"></small></label>
+ <div id="proxy-manual" class="span-two form-grid" hidden>
+ <label class="span-two" for="proxy-protocol">${text('settings.ui.general.proxy.protocol')}<select id="proxy-protocol"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option><option value="socks5h">SOCKS5h</option></select></label>
+ <label for="proxy-host">${text('settings.ui.general.proxy.host')}<input id="proxy-host" autocomplete="off" spellcheck="false" aria-describedby="proxy-host-hint"><small id="proxy-host-hint" data-i18n="settings.ui.general.proxy.host.hint"></small></label>
+ <label for="proxy-port">${text('settings.ui.general.proxy.port')}<input id="proxy-port" type="number" min="1" max="65535" step="1"></label>
+ </div></div></section>
  <section class="settings-group"><h2>${text('settings.ui.general')}</h2><div class="form-grid">
  <div class="span-two"><label class="check" for="start-with-windows"><input id="start-with-windows" type="checkbox" aria-describedby="start-with-windows-hint">${text('settings.ui.general.start_with_windows')}</label><small id="start-with-windows-hint" data-i18n="settings.ui.general.start_with_windows.hint"></small></div>
  <div class="span-two"><label class="check" for="start-as-admin"><input id="start-as-admin" type="checkbox" aria-describedby="start-as-admin-hint" disabled>${text('settings.ui.general.start_as_admin')}</label><small id="start-as-admin-hint" data-i18n="settings.ui.general.start_as_admin.hint"></small></div>
@@ -166,17 +175,54 @@ export function mountSettings(root:HTMLElement) {
   el(id).addEventListener('compositionend',()=>{updateText(id,true);syncControls();});
  }
  for(const kind of promptKinds)for(const event of ['input','compositionstart'])el(`${kind}-prompt`).addEventListener(event,()=>promptSource(kind,'custom'));
+ function syncProxy() {
+  const enabled=input('proxy-enabled').checked;
+  const manual=value('proxy-mode')==='manual';
+  el<HTMLSelectElement>('proxy-mode').disabled=!loaded||!enabled;
+  el('proxy-manual').hidden=!manual;
+  for(const id of ['proxy-protocol','proxy-host','proxy-port']) {
+   const field=el<HTMLInputElement|HTMLSelectElement>(id);
+   field.disabled=!loaded||!enabled||!manual;field.required=enabled&&manual;
+  }
+ }
+ function normalizedProxyHost(host:string) {return host.trim().toLowerCase().replace(/^\[([^\]]+)\]$/,'$1');}
+ function validProxyHost(host:string) {
+  host=host.trim();
+  if(!host||new TextEncoder().encode(host).length>255)return false;
+  if(host.includes(':')||host.includes('[')||host.includes(']')) {
+   if(host.startsWith('[')&&host.endsWith(']'))host=host.slice(1,-1);
+   if(!/^[\da-f:.]+$/i.test(host)||!host.includes(':'))return false;
+   try{return new URL(`http://[${host}]`).hostname.startsWith('[');}catch{return false;}
+  }
+  return host.replace(/\.$/,'').split('.').every(part=>new TextEncoder().encode(part).length<=63&&/^[\p{L}\p{Nd}_](?:[\p{L}\p{Nd}_-]*[\p{L}\p{Nd}_])?$/u.test(part));
+ }
+ function validProxyPort(port:number) {return Number.isInteger(port)&&port>=1&&port<=65535;}
+ function readProxy():ProxyConfig {
+  const defaults=defaultConfig().general.proxy;
+  const saved={...defaults,...baseline.general?.proxy};
+  const port=value('proxy-port').trim()===''?NaN:Number(value('proxy-port'));
+  return {enabled:input('proxy-enabled').checked,mode:value('proxy-mode') as ProxyConfig['mode'],protocol:(value('proxy-protocol')||saved.protocol) as ProxyConfig['protocol'],host:value('proxy-host').trim(),port:validProxyPort(port)?port:validProxyPort(saved.port)?saved.port:0};
+ }
+ function proxySettings(proxy:ProxyConfig) {
+  if(!proxy.enabled)return {enabled:false};
+  if(proxy.mode==='system')return {enabled:true,mode:'system'};
+  return {...proxy,host:normalizedProxyHost(proxy.host)};
+ }
  // Browser-native validation strings follow the browser language, not the preview language.
  function refreshValidation() {
+  syncProxy();
   for(const field of Array.from(el<HTMLFormElement>('preferences').elements)) {
    if(!(field instanceof HTMLInputElement||field instanceof HTMLSelectElement||field instanceof HTMLTextAreaElement)||field.id in textFields)continue;
-   field.setCustomValidity('');const validity=field.validity;let code='';let args:Record<string,string>={};
-   if(validity.valueMissing)code='settings.ui.validation.required';
+   field.setCustomValidity('');if(!field.willValidate)continue;
+   const validity=field.validity;let code='';let args:Record<string,string>={};
+   if(validity.valueMissing||(field.id==='proxy-host'&&!field.value.trim()))code='settings.ui.validation.required';
    else if(validity.badInput)code='settings.ui.validation.number';
    else if(validity.typeMismatch)code='settings.ui.validation.url';
    else if(validity.patternMismatch)code=field.id==='asr-language'?'settings.ui.asr.language.title':'settings.ui.validation.invalid';
    else if((validity.rangeUnderflow||validity.rangeOverflow)&&field instanceof HTMLInputElement){code='settings.ui.validation.range';args={min:field.min,max:field.max};}
    else if(validity.stepMismatch)code='settings.ui.validation.step';
+   else if(field.id==='proxy-host'&&!validProxyHost(field.value))code='settings.ui.general.proxy.host.invalid';
+   else if(field.id==='proxy-protocol'&&!['http','https','socks5','socks5h'].includes(field.value))code='settings.ui.validation.invalid';
    if(code)field.setCustomValidity(t(locale,code,args));
   }
  }
@@ -187,9 +233,10 @@ export function mountSettings(root:HTMLElement) {
  el('max-tool-rounds').addEventListener('input',updateBudget);
  function fill(config:Config) {
   baseline=structuredClone(config);baseline.ui_language??='auto';
-  baseline.general={...defaultConfig().general,...config.general};
+  const generalDefaults=defaultConfig().general;
+  baseline.general={...generalDefaults,...config.general,proxy:{...generalDefaults.proxy,...config.general?.proxy}};
   baseline.popup.auto_hide_seconds??=30;
-  const values:Record<string,string|number> = {'auto-hide-seconds':baseline.popup.auto_hide_seconds,'ui-language':baseline.ui_language,'mode':config.mode,'hotkey':config.hotkey,'ai-hotkey':config.ai_hotkey,'max-seconds':config.recording.max_seconds,'asr-provider':config.asr.provider||'openai_compatible','asr-endpoint':config.asr.endpoint,'asr-model':config.asr.model,'asr-language':config.asr.language,'asr-timeout':config.asr.timeout_seconds,'llm-base':config.llm.base_url,'llm-model':config.llm.model,'output-format':config.llm.output_format,'llm-timeout':config.llm.timeout_seconds,'task-timeout':config.llm.task_timeout_seconds,'max-tool-rounds':config.llm.max_tool_rounds??2,'search-type':config.exa.search_type,'max-calls':config.exa.max_calls,'search-timeout':config.exa.timeout_seconds,'profile-custom':config.profile.custom_background};
+  const values:Record<string,string|number> = {'proxy-mode':baseline.general.proxy.mode,'proxy-protocol':baseline.general.proxy.protocol,'proxy-host':baseline.general.proxy.host,'proxy-port':baseline.general.proxy.port||'','auto-hide-seconds':baseline.popup.auto_hide_seconds,'ui-language':baseline.ui_language,'mode':config.mode,'hotkey':config.hotkey,'ai-hotkey':config.ai_hotkey,'max-seconds':config.recording.max_seconds,'asr-provider':config.asr.provider||'openai_compatible','asr-endpoint':config.asr.endpoint,'asr-model':config.asr.model,'asr-language':config.asr.language,'asr-timeout':config.asr.timeout_seconds,'llm-base':config.llm.base_url,'llm-model':config.llm.model,'output-format':config.llm.output_format,'llm-timeout':config.llm.timeout_seconds,'task-timeout':config.llm.task_timeout_seconds,'max-tool-rounds':config.llm.max_tool_rounds??2,'search-type':config.exa.search_type,'max-calls':config.exa.max_calls,'search-timeout':config.exa.timeout_seconds,'profile-custom':config.profile.custom_background};
   for(const kind of promptKinds) {
    const custom=config.llm[`${kind}_prompt`]??'';promptSource(kind,custom.trim()?'custom':'default');
    values[`${kind}-prompt`]=custom.trim()?custom:'';
@@ -200,6 +247,7 @@ export function mountSettings(root:HTMLElement) {
   if(!Array.from(select.options).some(option=>option.value===config.recording.device_id))select.add(deviceOption({id:config.recording.device_id,name:'',name_i18n:{code:'settings.ui.device.saved'}}));
   select.value=config.recording.device_id;
   input('exa-enabled').checked=config.exa.enabled;
+  input('proxy-enabled').checked=baseline.general.proxy.enabled;
   input('start-with-windows').checked=baseline.general.start_with_windows;
   input('start-as-admin').checked=baseline.general.start_as_admin;
   input('auto-copy').checked=baseline.general.auto_copy;
@@ -217,7 +265,7 @@ export function mountSettings(root:HTMLElement) {
   c.asr={provider:value('asr-provider') as Config['asr']['provider'],endpoint:value('asr-endpoint').trim(),model:value('asr-model').trim(),language:value('asr-language').trim(),timeout_seconds:Number(value('asr-timeout'))};
   c.llm={base_url:value('llm-base').trim(),model:value('llm-model').trim(),output_format:value('output-format'),timeout_seconds:Number(value('llm-timeout')),task_timeout_seconds:Number(value('task-timeout')),dictation_prompt:readPrompt('dictation'),dialogue_prompt:readPrompt('dialogue'),max_tool_rounds:Number(value('max-tool-rounds'))};
   c.exa={enabled:input('exa-enabled').checked,search_type:value('search-type'),max_calls:Number(value('max-calls')),timeout_seconds:Number(value('search-timeout'))};
-  c.general={start_with_windows:input('start-with-windows').checked,start_as_admin:input('start-with-windows').checked&&input('start-as-admin').checked,auto_copy:input('auto-copy').checked,mute_while_recording:input('mute-while-recording').checked};
+  c.general={start_with_windows:input('start-with-windows').checked,start_as_admin:input('start-with-windows').checked&&input('start-as-admin').checked,auto_copy:input('auto-copy').checked,mute_while_recording:input('mute-while-recording').checked,proxy:readProxy()};
   c.popup.auto_hide_seconds=Number(value('auto-hide-seconds'));
   c.profile={custom_background:value('profile-custom')};
   return c;
@@ -228,10 +276,13 @@ export function mountSettings(root:HTMLElement) {
   return {search_type:config.exa.search_type,timeout_seconds:config.exa.timeout_seconds};
  }
  function needsSave(kind:Service) {
-  return input(`key-${kind}`).value!==''||JSON.stringify(serviceSettings(read(),kind))!==JSON.stringify(serviceSettings(baseline,kind));
+  const config=read();
+  const invalidManual=config.general.proxy.enabled&&config.general.proxy.mode==='manual'&&['proxy-protocol','proxy-host','proxy-port'].some(id=>!el<HTMLInputElement|HTMLSelectElement>(id).validity.valid);
+  return input(`key-${kind}`).value!==''||invalidManual||JSON.stringify(proxySettings(config.general.proxy))!==JSON.stringify(proxySettings(baseline.general.proxy))||JSON.stringify(serviceSettings(config,kind))!==JSON.stringify(serviceSettings(baseline,kind));
  }
  function syncControls() {
   el<HTMLFieldSetElement>('settings-fields').disabled=!loaded;
+  refreshValidation();
   el<HTMLButtonElement>('save').disabled=!loaded||saving;
   input('start-as-admin').disabled=!loaded||!input('start-with-windows').checked;
   if(!input('start-with-windows').checked)input('start-as-admin').checked=false;
@@ -243,8 +294,8 @@ export function mountSettings(root:HTMLElement) {
    status(`test-hint-${kind}`,'',loaded&&pending?{code:'settings.ui.key.needs_save'}:undefined);
   }
  }
- el('preferences').addEventListener('input',()=>{refreshValidation();syncControls();});
- el('preferences').addEventListener('change',()=>{refreshValidation();syncControls();});
+ el('preferences').addEventListener('input',syncControls);
+ el('preferences').addEventListener('change',syncControls);
  for(const kind of promptKinds)el(`reset-${kind}`).addEventListener('click',()=>{
   if(!loaded)return;
   const field=el<HTMLTextAreaElement>(`${kind}-prompt`);

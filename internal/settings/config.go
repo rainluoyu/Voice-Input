@@ -31,10 +31,11 @@ type Config struct {
 	Privacy    Privacy   `json:"privacy"`
 }
 type General struct {
-	StartWithWindows   bool `json:"start_with_windows"`
-	StartAsAdmin       bool `json:"start_as_admin"`
-	AutoCopy           bool `json:"auto_copy"`
-	MuteWhileRecording bool `json:"mute_while_recording"`
+	Proxy              netapi.ProxyConfig `json:"proxy"`
+	StartWithWindows   bool               `json:"start_with_windows"`
+	StartAsAdmin       bool               `json:"start_as_admin"`
+	AutoCopy           bool               `json:"auto_copy"`
+	MuteWhileRecording bool               `json:"mute_while_recording"`
 }
 
 type Recording struct {
@@ -96,6 +97,7 @@ func (c Config) Normalized() Config {
 	if c.Mode == "mock" {
 		c.Mode = "live"
 	}
+	c.General.Proxy = c.General.Proxy.Normalized()
 	c.Profile = Profile{CustomBackground: c.Profile.Text()}
 	c.Popup.AlwaysOnTop = true
 	return c
@@ -118,7 +120,7 @@ func (c Config) HotkeyFor(intent task.Intent) string {
 }
 
 func Default() Config {
-	return Config{UILanguage: "auto", Version: 1, Mode: "live", Hotkey: "Ctrl+Alt+R", AIHotkey: "Ctrl+Alt+A", Recording: Recording{"default", 120}, ASR: ASR{Provider: "openai_compatible", TimeoutSeconds: 45}, LLM: LLM{TimeoutSeconds: 45, TaskTimeoutSeconds: 90, OutputFormat: "json_schema", MaxToolRounds: 2}, Exa: Exa{SearchType: "instant", MaxCalls: 2, TimeoutSeconds: 10}, Popup: Popup{AutoHideSeconds: 30, AlwaysOnTop: true}}
+	return Config{UILanguage: "auto", Version: 1, Mode: "live", Hotkey: "Ctrl+Alt+R", AIHotkey: "Ctrl+Alt+A", General: General{Proxy: netapi.DefaultProxyConfig()}, Recording: Recording{"default", 120}, ASR: ASR{Provider: "openai_compatible", TimeoutSeconds: 45}, LLM: LLM{TimeoutSeconds: 45, TaskTimeoutSeconds: 90, OutputFormat: "json_schema", MaxToolRounds: 2}, Exa: Exa{SearchType: "instant", MaxCalls: 2, TimeoutSeconds: 10}, Popup: Popup{AutoHideSeconds: 30, AlwaysOnTop: true}}
 }
 func (c Config) Validate() error {
 	switch c.UILanguage {
@@ -195,6 +197,9 @@ func (c Config) Validate() error {
 	}
 	if c.Exa.MaxCalls < 1 || c.Exa.MaxCalls > 8 || c.Exa.TimeoutSeconds < 8 || c.Exa.TimeoutSeconds > 15 {
 		return i18n.Error("settings.search_budget")
+	}
+	if err := c.General.Proxy.Validate(); err != nil {
+		return err
 	}
 	if c.General.StartAsAdmin && !c.General.StartWithWindows {
 		return i18n.Error("settings.startup_admin")

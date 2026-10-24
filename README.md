@@ -19,7 +19,8 @@ The interface supports English and Simplified Chinese. Choose a language in Inpu
 - **Optional Exa search:** AI dialogue only. Configure search attempts and tool rounds independently; zero tool rounds disables tools.
 - **Single- and multi-line input:** Unicode input for a single line; clipboard paste for paragraphs and code, without simulated Enter/Shift+Enter.
 - **Desktop controls:** tray access, editable global shortcuts, microphone selection, real input-level feedback, single-instance protection and a topmost popup that does not take focus.
-- **General settings:** optional Windows login startup (including administrator startup with UAC authorization), automatic result copying, playback muting while recording with state restoration, and a 1–3600-second result display duration (default 30 seconds). New switches are off by default.
+- **General settings:** optional Windows login startup (including administrator startup with UAC authorization), automatic result copying, playback muting while recording with state restoration, and a 1–3600-second result display duration (default 30 seconds). Startup, automatic copying and recording-time muting are off by default.
+- **Proxy settings:** the system proxy is used by default. Turn the proxy off to connect directly, or configure a manual HTTP/HTTPS/SOCKS5 proxy with a host and port.
 
 ## Download and run
 

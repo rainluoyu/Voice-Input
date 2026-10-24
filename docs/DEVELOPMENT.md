@@ -46,7 +46,7 @@ go run ./tools/winresource -png frontend/public/app-icon.png
 
 派生 PNG 需要提交，生成的 `.syso` 和前端 `dist/` 不提交。编译 Windows 前必须先生成前端和资源。
 
-## Linux/WSL 自动检查
+## Linux 自动检查
 
 依赖已安装时，可分别执行：
 
@@ -60,7 +60,7 @@ go vet ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet ./...
 mkdir -p bin
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-H=windowsgui -X=voice_input/internal/buildmeta.Version=$version" -o bin/voice_input.exe ./cmd/voice_input
-for package in wininput audio settings app popup instance startup; do
+for package in wininput audio settings app popup instance startup tray netapi; do
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o "bin/$package.test.exe" "./internal/$package"
 done
 ```
@@ -88,7 +88,7 @@ Python 仅用于开发辅助：`tests/frontend_smoke.py`、`tests/frontend_bridg
 | `scripts/package.sh` | 构建并生成便携 ZIP/SHA-256，不替代完整回归或安全扫描 |
 | `scripts/security.sh` | npm 审计及已有 EXE 的漏洞扫描，不重新构建或启动 EXE |
 
-首次安装及安全审计可能联网。对外请求使用实际执行侧的 `PROXY_URL`，并按工具要求传入标准代理变量；本机回环请求直连。Windows 与 WSL 各用自己的配置，不复制另一侧回环地址。
+首次安装及安全审计可能联网。如需代理，请按各工具要求配置标准代理环境变量；本地预览请求应保持直连。
 
 普通回归务必清空 `VOICE_INPUT_REAL_ACCEPTANCE`。需要真实服务时，另按[真实服务测试](REAL_SERVICE_ACCEPTANCE.md)显式启用，并将报告放在仓库外。
 

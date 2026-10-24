@@ -27,6 +27,7 @@ import (
 	"voice_input/internal/search"
 	"voice_input/internal/settings"
 	"voice_input/internal/startup"
+	"voice_input/internal/tray"
 	"voice_input/internal/wininput"
 )
 
@@ -40,7 +41,7 @@ type Desktop struct {
 	testMarker   atomic.Pointer[i18n.Message]
 	locale       atomic.Value // i18n.Locale, applied only on the UI thread.
 	testMu       sync.Mutex
-	tray         *application.SystemTray
+	tray         *tray.Window
 	traySettings *application.MenuItem
 	trayCancel   *application.MenuItem
 	trayQuit     *application.MenuItem
@@ -308,9 +309,9 @@ func (d *Desktop) TestConnection(ctx context.Context, kind string) ActionResult 
 	if err != nil {
 		return d.action(false, false, i18n.M("popup.feedback.key_unavailable"))
 	}
-	client, err := netapi.Client()
+	client, err := netapi.Client(cfg.General.Proxy)
 	if err != nil {
-		return d.action(false, false, i18n.M("popup.feedback.proxy_invalid"))
+		return d.action(false, false, i18n.FromError(err, "popup.feedback.proxy_invalid"))
 	}
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)

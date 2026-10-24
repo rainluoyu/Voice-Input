@@ -21,6 +21,7 @@ import (
 	"voice_input/internal/popup"
 	"voice_input/internal/settings"
 	"voice_input/internal/startup"
+	"voice_input/internal/tray"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -88,18 +89,21 @@ func main() {
 	})
 	desktop.popup = statusPopup
 	statusPopup.SetLocale(desktop.appliedLocale())
-	tray := a.SystemTray.New()
-	desktop.tray = tray
-	tray.SetIcon(branding.PNG())
-	tray.SetTooltip(shortcutTooltip(cfg))
 	menu := a.NewMenu()
 	menu.Add(branding.Name).SetEnabled(false)
 	desktop.traySettings = menu.Add(i18n.M("popup.tray.settings").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { desktop.ShowSettings() })
 	desktop.trayCancel = menu.Add(i18n.M("popup.tray.cancel").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { controller.Close() })
 	menu.AddSeparator()
 	desktop.trayQuit = menu.Add(i18n.M("popup.tray.quit").Text(desktop.appliedLocale())).OnClick(func(_ *application.Context) { controller.Close(); a.Quit() })
-	tray.SetMenu(menu)
-	tray.OnClick(func() { desktop.ShowSettings() })
+	trayFailed := func(err error) {
+		log.Printf("tray: %v", err)
+		desktop.setStartupError(i18n.M("popup.feedback.tray_failed"))
+	}
+	desktop.tray = tray.New(tray.Options{
+		Icon: branding.PNG(), Tooltip: shortcutTooltip(cfg), Menu: menu,
+		OnClick: desktop.ShowSettings,
+		OnError: func(err error) { trayFailed(err); desktop.ShowSettings() },
+	})
 	for _, intent := range []core.Intent{core.Dictation, core.Dialogue} {
 		key, _ := hotkey.Parse(cfg.HotkeyFor(intent))
 		if err := a.GlobalShortcut.Register(key.Accelerator(), func() { desktop.hotkeyFired(key) }); err != nil {
@@ -108,28 +112,38 @@ func main() {
 	}
 	// Normal startup remains tray-only; incomplete settings and startup failures
 	// can be corrected without attempting a recording or finding the tray first.
-	started := make(chan struct{})
+	started, quit := make(chan struct{}), make(chan struct{})
 	var startOnce sync.Once
 	a.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
-		startOnce.Do(func() { close(started) })
-		missing := []string{}
-		for _, intent := range []core.Intent{core.Dictation, core.Dialogue} {
-			key, _ := hotkey.Parse(cfg.HotkeyFor(intent))
-			if !a.GlobalShortcut.IsRegistered(key.Accelerator()) {
-				missing = append(missing, cfg.HotkeyFor(intent))
+		application.InvokeSync(func() {
+			select {
+			case <-quit:
+				return
+			default:
 			}
-		}
-		if len(missing) != 0 {
-			desktop.setStartupError(i18n.M("popup.feedback.shortcut_failed", "shortcuts", strings.Join(missing, " / ")))
-		}
-		if desktop.startupError.Load() != nil {
-			desktop.ShowSettings()
-		}
+			startOnce.Do(func() { close(started) })
+			if err := desktop.tray.Start(); err != nil {
+				trayFailed(err)
+			}
+			missing := []string{}
+			for _, intent := range []core.Intent{core.Dictation, core.Dialogue} {
+				key, _ := hotkey.Parse(cfg.HotkeyFor(intent))
+				if !a.GlobalShortcut.IsRegistered(key.Accelerator()) {
+					missing = append(missing, cfg.HotkeyFor(intent))
+				}
+			}
+			if len(missing) != 0 {
+				desktop.setStartupError(i18n.M("popup.feedback.shortcut_failed", "shortcuts", strings.Join(missing, " / ")))
+			}
+			if desktop.startupError.Load() != nil {
+				desktop.ShowSettings()
+			}
+		})
 	})
 	// Re-read on the UI thread so queued updates cannot show an obsolete task.
-	quit := make(chan struct{})
 	a.OnShutdown(func() {
 		close(quit)
+		desktop.tray.Destroy()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := controller.Shutdown(ctx); err != nil {

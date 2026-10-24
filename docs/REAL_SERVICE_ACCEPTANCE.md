@@ -29,7 +29,8 @@
 | `VOICE_INPUT_ACCEPTANCE_ASR_MODEL` | 仅 `pipeline` 需要；ASR 模型 ID |
 | `VOICE_INPUT_ACCEPTANCE_ASR_KEY` | 仅 `pipeline` 需要；ASR 凭据 |
 | `VOICE_INPUT_ACCEPTANCE_WAV` | 仅 `pipeline` 需要；已知中文合成 WAV 的本地路径 |
-| `PROXY_URL` | 实际执行侧的统一代理；复用生产客户端的回环直连规则 |
+
+验收客户端显式使用各用例配置的 `general.proxy`，默认跟随平台代理，不读取桌面 EXE 的配置文件。Windows 使用当前用户系统代理；非 Windows 使用标准 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`，本机回环目标始终直连。
 
 当前 pipeline 固定验收语句为“你好，欢迎来到语音工作室，今天我们验证声音与语速。”，并要求有声 PCM16、16 kHz、单声道 WAV；不要将任意真人录音或私人音频代入此固定用例。音频不随测试文件分发，也不调用 TTS 服务。
 

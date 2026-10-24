@@ -45,7 +45,7 @@ func TestProxyAndRedaction(t *testing.T) {
 		_, _ = w.Write([]byte("secret-key response body"))
 	}))
 	defer server.Close()
-	client, err := Client()
+	client, err := Client(DefaultProxyConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestResponseLimitAndRedirect(t *testing.T) {
 		_, _ = w.Write([]byte(strings.Repeat("x", 100)))
 	}))
 	defer server.Close()
-	client, _ := Client()
+	client, _ := Client(DefaultProxyConfig())
 	for _, path := range []string{"/large", "/redirect"} {
 		req, _ := http.NewRequest("GET", server.URL+path, nil)
 		if _, err := Do(context.Background(), client, req, "asr", 10); err == nil {
@@ -81,7 +81,7 @@ func TestBodyReadTimeoutIsClassified(t *testing.T) {
 		time.Sleep(60 * time.Millisecond)
 	}))
 	defer server.Close()
-	client, _ := Client()
+	client, _ := Client(DefaultProxyConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
 	defer cancel()
 	request, _ := http.NewRequest("GET", server.URL, nil)

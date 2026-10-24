@@ -17,6 +17,7 @@ system_locale = "zh-CN"
 hold_test = False
 pending_test = []
 general_defaults = {"start_with_windows": False, "start_as_admin": False, "auto_copy": False, "mute_while_recording": False}
+proxy_defaults = {"enabled": True, "mode": "system", "protocol": "http", "host": "", "port": 0}
 enabled_general = {key: True for key in general_defaults}
 config = {
     "version": 1, "mode": "live", "hotkey": "Ctrl+Alt+R", "ai_hotkey": "Ctrl+Alt+A",
@@ -97,6 +98,14 @@ with sync_playwright() as p:
     def general_draft():
         return {key: page.locator("#" + key.replace("_", "-")).is_checked() for key in general_defaults}
 
+    def proxy_draft():
+        return {"enabled": page.locator("#proxy-enabled").is_checked(), **{key: page.locator("#proxy-" + key).input_value() for key in ("mode", "protocol", "host", "port")}}
+
+    def proxy_guard(dirty):
+        for service in ("asr", "llm", "exa"):
+            assert page.locator("#test-" + service).is_disabled() == dirty, service
+            assert (page.locator("#test-hint-" + service).get_attribute("hidden") is None) == dirty, service
+
     def save_result(ok=True, http_error=False, saved=False, identity=None):
         global config
         wait_pending(pending_save)
@@ -110,11 +119,13 @@ with sync_playwright() as p:
 
     page.goto("http://wails.localhost/?view=settings", wait_until="domcontentloaded")
     wait_pending(pending_read)
-    for selector in ("#mode", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr", "#refresh-devices", "#save"):
+    for selector in ("#mode", "#proxy-enabled", "#proxy-mode", "#proxy-protocol", "#proxy-host", "#proxy-port", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr", "#refresh-devices", "#save"):
         assert page.locator(selector).is_disabled(), selector
     assert page.locator("#summary").inner_text() == "加载设置…"
     fulfill_read()
     page.wait_for_function('!document.querySelector("#save").disabled')
+    page.wait_for_load_state("networkidle")
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     assert page.locator("#summary").inner_text() == "v1.4.2-rc.1"
     assert page.locator("#panel-input").is_visible(), "Input remains the default category"
     assert page.locator("#test-asr").is_enabled(), "legacy defaults must not dirty ASR"
@@ -122,6 +133,12 @@ with sync_playwright() as p:
     tab("general")
     assert "general" not in config, "legacy fixtures exercise the default fallback"
     assert general_draft() == general_defaults
+    assert proxy_draft() == {**proxy_defaults, "port": ""}
+    proxy_guard(False)
+    assert page.locator("#proxy-mode").is_enabled()
+    assert page.locator("#proxy-manual").is_hidden()
+    for field in ("protocol", "host", "port"):
+        assert page.locator("#proxy-" + field).is_disabled()
     assert page.locator("#auto-hide-seconds").input_value() == "77"
     assert page.locator("#start-as-admin").is_disabled()
     for field, label in (("start-with-windows", "开机自启"), ("start-as-admin", "以管理员身份自启"), ("auto-copy", "自动复制文本"), ("mute-while-recording", "录音时静音播放"), ("auto-hide-seconds", "自动隐藏等待时间（秒）")):
@@ -155,7 +172,7 @@ with sync_playwright() as p:
         page.locator("#auto-hide-seconds").fill(str(seconds))
         page.locator("#save").click()
         submitted = save_result()
-        assert submitted["general"] == enabled_general
+        assert submitted["general"] == {**enabled_general, "proxy": proxy_defaults}
         assert submitted["popup"] == {"auto_hide_seconds": seconds, "always_on_top": False}
         page.reload(wait_until="domcontentloaded")
         fulfill_read()
@@ -276,7 +293,7 @@ with sync_playwright() as p:
     assert submitted["llm"]["dictation_prompt"] == "" and submitted["llm"]["dialogue_prompt"] == ""
     assert submitted["llm"]["max_tool_rounds"] == 0 and submitted["exa"]["max_calls"] == 8
     assert submitted["popup"] == {"auto_hide_seconds": 88, "always_on_top": False}
-    assert submitted["general"] == enabled_general
+    assert submitted["general"] == {**enabled_general, "proxy": proxy_defaults}
     assert submitted["privacy"] == {"save_history": True, "log_text": True}
     assert submitted["profile"]["custom_background"] == "独立背景😀\n未保存修改"
 
@@ -301,7 +318,7 @@ with sync_playwright() as p:
     page.locator("#llm-model").fill("newer-draft")
     submitted = save_result()
     assert submitted["llm"]["model"] == "submitted"
-    assert submitted["general"] == general_defaults and submitted["popup"]["auto_hide_seconds"] == 100
+    assert submitted["general"] == {**general_defaults, "proxy": proxy_defaults} and submitted["popup"]["auto_hide_seconds"] == 100
     assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "101"
     assert page.locator("#llm-model").input_value() == "newer-draft"
     assert page.locator("#test-llm").is_disabled()
@@ -314,7 +331,7 @@ with sync_playwright() as p:
         page.locator("#save").click()
         save_result(False, http_error=http_error)
         assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "101"
-        assert config["general"] == general_defaults and config["popup"]["auto_hide_seconds"] == 100
+        assert config["general"] == {**general_defaults, "proxy": proxy_defaults} and config["popup"]["auto_hide_seconds"] == 100
         assert page.locator("#llm-model").input_value() == "failed-draft"
         assert page.locator("#test-llm").is_disabled()
         page.locator("#llm-model").fill("submitted")
@@ -459,8 +476,8 @@ with sync_playwright() as p:
     page.locator("#key-llm").fill("newer-unsaved-key")
     submitted = save_result(False, saved=True, identity={"code": "popup.feedback.saved"})
     assert submitted["ui_language"] == "en" and submitted["llm"]["model"] == "snapshot-en"
-    assert submitted["general"] == general_defaults and submitted["popup"]["auto_hide_seconds"] == 202
-    assert config["general"] == general_defaults and config["popup"]["auto_hide_seconds"] == 202
+    assert submitted["general"] == {**general_defaults, "proxy": proxy_defaults} and submitted["popup"]["auto_hide_seconds"] == 202
+    assert config["general"] == {**general_defaults, "proxy": proxy_defaults} and config["popup"]["auto_hide_seconds"] == 202
     assert general_draft() == enabled_general and page.locator("#auto-hide-seconds").input_value() == "203"
     assert submitted["llm"]["dictation_prompt"] == "" and submitted["llm"]["dialogue_prompt"] == ""
     assert page.locator("#ui-language").input_value() == "auto"
@@ -584,18 +601,246 @@ with sync_playwright() as p:
     assert page.locator("#auto-hide-seconds").input_value() == "30"
     page.locator("#save").click()
     submitted = save_result()
-    assert submitted["general"] == general_defaults
+    assert submitted["general"] == {**general_defaults, "proxy": proxy_defaults}
     assert submitted["popup"] == {"auto_hide_seconds": 30, "always_on_top": False}
+
+    # Proxy defaults merge independently of General's boolean defaults.
+    def reload_proxy_fixture():
+        page.reload(wait_until="domcontentloaded")
+        fulfill_read()
+        page.wait_for_function('!document.querySelector("#save").disabled')
+        tab("general")
+
+    for partial in (None, {}, {"enabled": False}, {"mode": "manual", "host": "proxy.example", "port": 8123}, {"enabled": False, "protocol": "socks5h", "host": "draft.example", "port": 8124}):
+        config["general"] = {"auto_copy": True}
+        if partial is not None:
+            config["general"]["proxy"] = partial
+        reload_proxy_fixture()
+        expected = {**proxy_defaults, **(partial or {})}
+        assert proxy_draft() == {**expected, "port": str(expected["port"]) if expected["port"] else ""}
+        assert general_draft() == {**general_defaults, "auto_copy": True}
+        proxy_guard(False)
+        assert page.locator("#proxy-mode").is_disabled() == (not expected["enabled"])
+        page.locator("#save").click()
+        submitted = save_result()
+        assert submitted["general"] == {**general_defaults, "auto_copy": True, "proxy": expected}
+
+    config["general"] = {**general_defaults, "proxy": copy.deepcopy(proxy_defaults)}
+    reload_proxy_fixture()
+    for field, label in (("enabled", "启用代理"), ("mode", "代理模式"), ("protocol", "代理协议"), ("host", "主机"), ("port", "端口")):
+        assert page.locator(f'label[for="proxy-{field}"] span').inner_text() == label
+    assert page.locator("#proxy-mode option").all_text_contents() == ["跟随系统", "手动代理"]
+    assert page.locator("#proxy-protocol option").all_text_contents() == ["HTTP", "HTTPS", "SOCKS5", "SOCKS5h"]
+    assert "PROXY_URL" not in page.locator("#panel-general").text_content()
+    assert "保存后生效" in page.locator("#proxy-mode-hint").inner_text()
+
+    # Mode/off only disable fields: no input reconstruction, draft loss or focus stealing.
+    page.locator("#proxy-mode").select_option("manual")
+    proxy_guard(True)
+    assert page.locator("#proxy-manual").is_visible()
+    page.locator("#proxy-protocol").select_option("socks5h")
+    page.locator("#proxy-host").fill(" Draft.Example ")
+    page.locator("#proxy-port").fill("8123")
+    page.locator("#proxy-host").evaluate("node => { window.__proxyHost=node; node.focus(); node.setSelectionRange(2,6); }")
+    language("en")
+    assert page.locator("#proxy-host").evaluate("node => node===window.__proxyHost && node===document.activeElement && node.selectionStart===2 && node.selectionEnd===6")
+    for field, label in (("enabled", "Enable proxy"), ("mode", "Proxy mode"), ("protocol", "Proxy protocol"), ("host", "Host"), ("port", "Port")):
+        assert page.locator(f'label[for="proxy-{field}"] span').inner_text() == label
+    assert page.locator("#proxy-mode option").all_text_contents() == ["System", "Manual"]
+    assert "saved settings only" in page.locator("#proxy-mode-hint").inner_text()
+    draft = proxy_draft()
+    page.locator("#proxy-mode").focus()
+    page.locator("#proxy-mode").select_option("system")
+    proxy_guard(False)
+    assert page.locator("#proxy-manual").is_hidden()
+    for field in ("protocol", "host", "port"):
+        assert page.locator("#proxy-" + field).is_disabled()
+    assert page.locator("#proxy-mode").evaluate("node => node===document.activeElement")
+    page.locator("#proxy-mode").select_option("manual")
+    assert page.locator("#proxy-mode").evaluate("node => node===document.activeElement")
+    assert proxy_draft() == draft
+    page.locator("#proxy-enabled").uncheck()
+    assert page.locator("#proxy-mode").is_disabled()
+    assert page.locator("#proxy-enabled").evaluate("node => node===document.activeElement")
+    for field in ("protocol", "host", "port"):
+        assert page.locator("#proxy-" + field).is_disabled()
+    page.locator("#proxy-enabled").check()
+    assert proxy_draft() == draft
+    assert page.locator("#proxy-host").evaluate("node => node===window.__proxyHost")
+    language("zh-CN")
+
+    # Active manual validation reveals General and blocks every service, even when read falls back.
+    before = sum(method == "SaveSettings" for method, _ in requests)
+    for invalid, validation in (("", "请填写此字段。"), ("0", "请输入 1 到 65535 之间的值。"), ("65536", "请输入 1 到 65535 之间的值。"), ("1.5", "请输入整数。")):
+        page.locator("#proxy-port").fill(invalid)
+        proxy_guard(True)
+        assert page.locator("#proxy-port").evaluate("node => node.validationMessage") == validation
+        tab("input")
+        page.locator("#save").click()
+        assert page.locator("#panel-general").is_visible()
+        assert page.locator("#proxy-port").evaluate("node => node===document.activeElement")
+        assert sum(method == "SaveSettings" for method, _ in requests) == before
+    language("en")
+    assert page.locator("#proxy-port").evaluate("node => node.validationMessage") == "Please enter a whole number."
+    language("zh-CN")
+    page.locator("#proxy-port").fill("8123")
+    for invalid in ("", " ", "http://proxy.example", "proxy.example:8123", "user@proxy.example", "proxy.example/path", "proxy.example?x=1", "proxy.example#x", "proxy example", "-proxy.example", "proxy..example", "[proxy.example]", "[::1]:8123", "::1]/path", "::1]#fragment", "fe80::1%eth0", "a" * 64 + ".example"):
+        page.locator("#proxy-host").fill(invalid)
+        proxy_guard(True)
+        assert not page.locator("#proxy-host").evaluate("node => node.checkValidity()"), invalid
+        page.locator("#save").click()
+        assert sum(method == "SaveSettings" for method, _ in requests) == before
+    language("en")
+    assert page.locator("#proxy-host").evaluate("node => node.validationMessage") == "Enter a hostname, IPv4 or IPv6 address without a URL or port."
+    language("zh-CN")
+    for valid in ("proxy.example", "localhost", "127.0.0.1", "::1", "[2001:db8::1]", "Proxy_Name.example.", "代理.example", "999.1.1.1"):
+        page.locator("#proxy-host").fill(valid)
+        assert page.locator("#proxy-host").evaluate("node => node.checkValidity()"), valid
+    page.locator("#proxy-host").fill(" Draft.Example ")
+    page.locator("#proxy-protocol").evaluate("node => { node.add(new Option('invalid','invalid')); node.value='invalid'; node.dispatchEvent(new Event('change',{bubbles:true})); }")
+    proxy_guard(True)
+    assert page.locator("#proxy-protocol").evaluate("node => node.validationMessage") == "请检查此值。"
+    page.locator("#save").click()
+    assert sum(method == "SaveSettings" for method, _ in requests) == before
+    page.locator("#proxy-protocol").select_option("http")
+    page.locator("#proxy-protocol").evaluate("node => node.querySelector('option[value=invalid]').remove()")
+
+    # Both port boundaries and all protocols round-trip; saving trims, but never rewrites the DOM draft.
+    for protocol, port in (("http", 1), ("https", 65535), ("socks5", 8123), ("socks5h", 8124)):
+        page.locator("#proxy-protocol").select_option(protocol)
+        page.locator("#proxy-port").fill(str(port))
+        page.locator("#save").click()
+        submitted = save_result()
+        assert submitted["general"]["proxy"] == {"enabled": True, "mode": "manual", "protocol": protocol, "host": "Draft.Example", "port": port}
+        assert page.locator("#proxy-host").input_value() == " Draft.Example "
+        proxy_guard(False)
+    page.locator("#proxy-host").fill(" draft.example ")
+    proxy_guard(False)
+    for field, change, restore in (("host", "other.example", "Draft.Example"), ("port", "8125", "8124")):
+        page.locator("#proxy-" + field).fill(change)
+        proxy_guard(True)
+        page.locator("#proxy-" + field).fill(restore)
+        proxy_guard(False)
+    page.locator("#proxy-protocol").select_option("http")
+    proxy_guard(True)
+    page.locator("#proxy-protocol").select_option("socks5h")
+    proxy_guard(False)
+    page.locator("#proxy-port").fill("")
+    proxy_guard(True)
+    before = sum(method == "TestConnection" for method, _ in requests)
+    for service in ("asr", "llm", "exa"):
+        page.locator("#test-" + service).evaluate("node => node.dispatchEvent(new Event('click'))")
+    assert sum(method == "TestConnection" for method, _ in requests) == before
+
+    # Turning off or switching to system clears hidden validation BEFORE Save, retaining bad drafts.
+    for mode in ("off", "system"):
+        for invalid in ("", "0", "65536", "1.5", "nan", "bad-input"):
+            page.locator("#proxy-enabled").check()
+            page.locator("#proxy-mode").select_option("manual")
+            if invalid == "nan":
+                page.locator("#proxy-port").evaluate("node => { node.valueAsNumber=NaN; node.dispatchEvent(new Event('input',{bubbles:true})); }")
+            elif invalid == "bad-input":
+                page.locator("#proxy-port").fill("")
+                page.locator("#proxy-port").press_sequentially("e")
+                assert page.locator("#proxy-port").evaluate("node => node.validity.badInput")
+            else:
+                page.locator("#proxy-port").fill(invalid)
+            page.locator("#proxy-host").fill("http://unfinished")
+            proxy_guard(True)
+            if mode == "off":
+                page.locator("#proxy-enabled").uncheck()
+            else:
+                page.locator("#proxy-mode").select_option("system")
+            raw = proxy_draft()
+            for field in ("protocol", "host", "port"):
+                assert page.locator("#proxy-" + field).is_disabled()
+                assert page.locator("#proxy-" + field).evaluate("node => node.validationMessage") == ""
+            page.locator("#save").click()
+            submitted = save_result()
+            assert submitted["general"]["proxy"]["port"] == 8124
+            assert type(submitted["general"]["proxy"]["port"]) is int
+            assert proxy_draft() == raw
+            proxy_guard(False)
+        # Non-effective manual drafts must not dirty the saved off/system projection.
+        page.locator("#proxy-host").evaluate("node => { node.value='another draft'; node.dispatchEvent(new Event('input',{bubbles:true})); }")
+        proxy_guard(False)
+
+    # An old system configuration has no legal saved port: inactive bad drafts serialize as integer 0.
+    config["general"]["proxy"] = copy.deepcopy(proxy_defaults)
+    reload_proxy_fixture()
+    page.locator("#proxy-mode").select_option("manual")
+    page.locator("#proxy-port").fill("1.5")
+    page.locator("#proxy-enabled").uncheck()
+    page.locator("#save").click()
+    assert save_result()["general"]["proxy"]["port"] == 0
+    assert page.locator("#proxy-port").input_value() == "1.5"
+    proxy_guard(False)
+    page.locator("#proxy-mode").evaluate("node => { node.value='system'; node.dispatchEvent(new Event('change',{bubbles:true})); }")
+    proxy_guard(False)
+
+    # Pending saves advance only their submitted proxy snapshot, including saved=true/ok=false.
+    page.locator("#proxy-enabled").check()
+    page.locator("#proxy-mode").select_option("manual")
+    page.locator("#proxy-host").fill("[2001:db8::1]")
+    page.locator("#proxy-port").fill("8123")
+    for saved_only in (False, True):
+        page.locator("#save").click()
+        wait_pending(pending_save)
+        assert page.locator("#proxy-host").is_enabled()
+        page.locator("#proxy-host").fill("newer-draft.example")
+        page.locator("#proxy-port").fill("8125")
+        page.locator("#proxy-protocol").select_option("https")
+        submitted = save_result(not saved_only, saved=saved_only)
+        assert submitted["general"]["proxy"] == {**proxy_defaults, "mode": "manual", "host": "[2001:db8::1]", "port": 8123}
+        assert proxy_draft() == {"enabled": True, "mode": "manual", "protocol": "https", "host": "newer-draft.example", "port": "8125"}
+        proxy_guard(True)
+        page.locator("#proxy-host").fill("2001:DB8::1")
+        page.locator("#proxy-port").fill("8123")
+        page.locator("#proxy-protocol").select_option("http")
+        proxy_guard(False)
+        page.locator("#proxy-host").fill("[2001:db8::1]")
+    for http_error in (False, True):
+        page.locator("#proxy-host").fill("failed-snapshot.example")
+        page.locator("#save").click()
+        wait_pending(pending_save)
+        page.locator("#proxy-host").fill("retained-new-draft.example")
+        page.locator("#proxy-port").fill("1.5")
+        draft = proxy_draft()
+        save_result(False, http_error=http_error)
+        assert proxy_draft() == draft
+        assert config["general"]["proxy"] == {**proxy_defaults, "mode": "manual", "host": "[2001:db8::1]", "port": 8123}
+        proxy_guard(True)
+        page.locator("#proxy-host").fill("[2001:db8::1]")
+        page.locator("#proxy-port").fill("8123")
+        proxy_guard(False)
+    for service, group in (("asr", "models"), ("llm", "models"), ("exa", "network")):
+        tab(group)
+        page.locator("#test-" + service).click()
+        page.wait_for_function("service => document.querySelector('#test-'+service).disabled === false", arg=service)
+        assert ("TestConnection", [service]) in requests
+
+    # Manual fields retain the existing one-column narrow layout and fixed command bar in both locales.
+    tab("general")
+    for locale in ("en", "zh-CN"):
+        language(locale)
+        translated(locale)
+        for width, height in ((760, 800), (520, 500), (360, 800)):
+            page.set_viewport_size({"width": width, "height": height})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight")
+            before = page.locator("#save").bounding_box()
+            page.locator("#preferences").evaluate("node => node.scrollTop=node.scrollHeight")
+            assert page.locator("#save").bounding_box() == before
+            assert before and before["y"] + before["height"] <= height
 
     page.reload(wait_until="domcontentloaded")
     fulfill_read(False)
     page.wait_for_function('document.querySelector("#bridge-error").textContent.includes("禁用保存")')
     before = sum(method == "SaveSettings" for method, _ in requests)
-    for selector in ("#save", "#mode", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr"):
+    for selector in ("#save", "#mode", "#proxy-enabled", "#proxy-mode", "#proxy-protocol", "#proxy-host", "#proxy-port", "#start-with-windows", "#start-as-admin", "#auto-copy", "#mute-while-recording", "#auto-hide-seconds", "#key-asr", "#save-key-asr", "#delete-key-asr", "#test-asr"):
         assert page.locator(selector).is_disabled(), selector
     page.locator("#preferences").evaluate("form => form.requestSubmit()")
     page.wait_for_timeout(50)
     assert sum(method == "SaveSettings" for method, _ in requests) == before
     assert not errors, errors
     browser.close()
-print("PASS: General defaults/round-trip, startup/admin dependency, 1..3600 integer validation and bilingual labels/hints; popup siblings preserved; bilingual settings/feedback and system-resolved auto; explicit default/custom prompt sources; DOM/focus/selection/IME/scroll/key retention; pending save/test/key and failures preserve drafts; saved=true/ok=false snapshot baseline; dirty guards, typed/legacy messages, devices/XSS and existing viewport/validation regressions")
+print("PASS: proxy deep defaults/false retention, bilingual General controls, manual/system/off drafts and focus, host/protocol and active/inactive integer-port validation, all-service effective-proxy guards, saved snapshots/pending edits/failures and loading disablement; General defaults/round-trip, startup/admin dependency, 1..3600 integer validation and bilingual labels/hints; popup siblings preserved; bilingual settings/feedback and system-resolved auto; explicit default/custom prompt sources; DOM/focus/selection/IME/scroll/key retention; pending save/test/key and failures preserve drafts; saved=true/ok=false snapshot baseline; dirty guards, typed/legacy messages, devices/XSS and existing viewport/validation regressions")

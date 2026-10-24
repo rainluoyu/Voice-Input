@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ -n "${PROXY_URL:-}" ]]; then export HTTPS_PROXY="$PROXY_URL" HTTP_PROXY="$PROXY_URL"; fi
 export NO_PROXY="127.0.0.1,localhost,::1${NO_PROXY:+,$NO_PROXY}"
 export UI_TEST_PORT="${UI_TEST_PORT:-5173}"
 tools="${TMPDIR:-/tmp}/voice_input-ui-tools"

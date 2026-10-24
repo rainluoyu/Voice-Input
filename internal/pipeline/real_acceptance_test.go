@@ -98,7 +98,7 @@ func TestRealAcceptance(t *testing.T) {
 		if err != nil {
 			t.Fatal("fixture must be valid non-quiet PCM16/16k/mono WAV within size limits")
 		}
-		asrClient := acceptanceClient(t, "asr", ledger)
+		asrClient := acceptanceClient(t, cfg.General.Proxy, "asr", ledger)
 		defer asrClient.CloseIdleConnections()
 		processor := &acceptancePipeline{}
 		injector := &fakeInjector{}
@@ -187,7 +187,7 @@ func TestRealAcceptance(t *testing.T) {
 				before := ledger.snapshot()
 				defer report.finish(t, &c, before, time.Now())
 				cfg, keys := acceptanceLLMConfig(t, report, &c)
-				client := acceptanceClient(t, "llm", ledger)
+				client := acceptanceClient(t, cfg.General.Proxy, "llm", ledger)
 				defer client.CloseIdleConnections()
 				// Advertise the real tool contract, but reject accidental ordinary searches
 				// BEFORE any paid Exa request; an attempt is an assertion failure, not a retry.
@@ -229,11 +229,12 @@ func TestRealAcceptance(t *testing.T) {
 		if settings.ValidKey(key) != nil {
 			t.Fatal("invalid Exa acceptance key")
 		}
-		client := acceptanceClient(t, "exa", ledger)
+		cfg := settings.Default()
+		client := acceptanceClient(t, cfg.General.Proxy, "exa", ledger)
 		defer client.CloseIdleConnections()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		hits, err := (search.Exa{Client: client, Key: key, Config: settings.Default().Exa}).Search(ctx, c.Input)
+		hits, err := (search.Exa{Client: client, Key: key, Config: cfg.Exa}).Search(ctx, c.Input)
 		c.ErrorClass = acceptanceErrorClass(err)
 		c.SourceURLs = acceptanceURLs(hits)
 		acceptanceCheck(t, &c, "valid_response", err == nil)
@@ -253,9 +254,9 @@ func TestRealAcceptance(t *testing.T) {
 		if settings.ValidKey(key) != nil {
 			t.Fatal("invalid Exa acceptance key")
 		}
-		lc := acceptanceClient(t, "llm", ledger)
+		lc := acceptanceClient(t, cfg.General.Proxy, "llm", ledger)
 		defer lc.CloseIdleConnections()
-		ec := acceptanceClient(t, "exa", ledger)
+		ec := acceptanceClient(t, cfg.General.Proxy, "exa", ledger)
 		defer ec.CloseIdleConnections()
 		cfg.Exa.MaxCalls = 1
 		guard := &acceptanceSearch{provider: search.Exa{Client: ec, Key: key, Config: cfg.Exa}, allowed: true}
@@ -596,8 +597,8 @@ func (l *acceptanceLedger) delta(before acceptanceSnapshot) (map[string]int, map
 	}
 	return after.calls, after.elapsed
 }
-func acceptanceClient(t *testing.T, service string, ledger *acceptanceLedger) *http.Client {
-	client, err := netapi.Client()
+func acceptanceClient(t *testing.T, proxy netapi.ProxyConfig, service string, ledger *acceptanceLedger) *http.Client {
+	client, err := netapi.Client(proxy)
 	if err != nil {
 		t.Fatal("acceptance proxy configuration invalid")
 	}
