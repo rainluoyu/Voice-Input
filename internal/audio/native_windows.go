@@ -167,6 +167,18 @@ func endpointMute(volume *wca.IAudioEndpointVolume) (bool, error) {
 	}
 	return muted != 0, nil
 }
+func endpointSetMute(volume *wca.IAudioEndpointVolume, muted bool) error {
+	var value uint32
+	if muted {
+		value = 1
+	}
+	// go-wca treats S_FALSE (an unchanged mute state) as an error; it is success.
+	hr, _, _ := syscall.SyscallN(volume.VTable().SetMute, uintptr(unsafe.Pointer(volume)), uintptr(value), 0)
+	if int32(hr) < 0 {
+		return i18n.Error("audio.mute_failed")
+	}
+	return nil
+}
 func mixFormat(format *wca.WAVEFORMATEX) (Format, error) {
 	size := 18
 	if format.WFormatTag == 0xfffe {
@@ -251,7 +263,7 @@ func (n *Native) capture(ctx context.Context, id string, maxSeconds int, level f
 			}
 		}()
 		if err = mute.mute(func() (bool, error) { return endpointMute(volume) }, func(muted bool) error {
-			return volume.SetMute(muted, nil)
+			return endpointSetMute(volume, muted)
 		}); err != nil {
 			return Data{}, err
 		}
